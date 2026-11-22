@@ -39,6 +39,46 @@ jobs:
       - name: 测试
         run: python -m pytest tests/ -q
 
+  # 从源码构建一遍，再用 tools/verify_release.py 验产物。
+  #
+  # 这个 job 存在的意义不是"发版"，是证明仓库里的源码确实能打出可用的包 ——
+  # 光有单元测试证明不了打包链路是通的（spec 漏文件、图标路径写错、入口
+  # 找不到，这些只有真打一次才暴露）。
+  #
+  # 只在 py3.12 上跑：PyInstaller 对每个 Python 小版本都要重新打，跑四遍
+  # 是四倍时间换零额外信息。
+  build:
+    name: 构建与产物校验
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: 生成版本资源
+        run: python tools/make_version_info.py
+
+      - name: 打包
+        run: python -m PyInstaller --noconfirm --clean --distpath dist xiaoxiongmao.spec
+
+      # verify_release.py 在临时目录里跑真 exe：HOME / USERPROFILE / XM_DATA /
+      # CODEX_HOME / ZCODE_HOME / DSH_HOME 全指到沙箱，不碰 runner 上的真实配置。
+      # 静态部分校验 PE 版本资源与图标，动态部分跑注入 / 校验 / 还原全链路。
+      #
+      # 图标缺失在这里只是警告：build/icon.ico 是二进制，不进库，
+      # CI 里本来就没有。版本资源必须过 —— 那一步是纯文本，能生成。
+      - name: 产物校验
+        run: python tools/verify_release.py
+
   clean:
     name: 仓库洁净度
     runs-on: ubuntu-latest

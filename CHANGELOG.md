@@ -12,6 +12,9 @@
 ### 变更
 
 - 注入与还原拆成两个函数：`write_like()` 写 UTF-8，`write_orig()` 写原始字节。合并会同时踩上面两个坑。
+- 新增 `tools/verify_release.py`：对打包产物做校验，静态读 PE 版本资源与图标，动态在沙箱里跑真 exe 走完注入 / 校验 / 还原。CI 增加 `build` job，从源码打一次包再验，证明打包链路是通的。
+- 新增 `tools/make_version_info.py`：版本号只从 `app.py:VERSION` 读，一次写完 `filevers` / `prodvers` / `FileVersion` / `ProductVersion`。`build/` 不进库，CI 打包前得靠它生成版本资源，否则打出来的 exe 没有 VS_VERSIONINFO。
+- 测试里 `test_gbk` 的旧断言已改。它原本写的是「GBK 文件没被改成 UTF-8」，把 1.3.7 修掉的错误行为固化成了预期。
 
 ## [1.3.6] - 2026-11-21
 

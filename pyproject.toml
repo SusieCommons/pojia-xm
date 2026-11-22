@@ -9,7 +9,7 @@ description = "把一份人格文件装进本地 AI 客户端的配置里 — Co
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "xiaoxiongmao contributors" }]
+authors = [{ name = "Susie", email = "SusieCommons@users.noreply.github.com" }]
 keywords = [
     "codex",
     "workbuddy",

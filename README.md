@@ -292,6 +292,29 @@ python tools/check_clean.py --history
 
 查工作区 + git 历史里有没有私钥、生产地址、本机绝对路径。CI 跑同一份，规则只有一处。
 
+### 产物校验
+
+单元测试覆盖的是源码逻辑，打包链路是另一回事 —— spec 漏文件、入口找不到、图标路径写错，这些只有真打一次才暴露。所以发版前还要验产物：
+
+```bash
+python -m PyInstaller --noconfirm --clean --distpath dist xiaoxiongmao.spec
+python tools/verify_release.py
+```
+
+它分两层：
+
+| 层 | 查什么 |
+| --- | --- |
+| 静态 | PE 版本资源里的 `FileVersion` 是否等于 `app.py` 的 `VERSION`（对不上说明 exe 是旧的）、图标帧数 |
+| 动态 | 在临时目录里跑真 exe，走完条款闸门 → 注入 → 校验 → 还原 |
+
+动态那层把 `HOME` / `USERPROFILE` / `XM_DATA` / `CODEX_HOME` / `ZCODE_HOME` / `DSH_HOME` 全部重定向到沙箱，不碰你本机的任何客户端配置。覆盖的具体项：
+
+- 未同意条款时退出码是 2，且打印了条款正文
+- codex 注入后是 UTF-8、无 BOM、不是 UTF-16 形态，还原后逐字节等于原始 GBK
+- zcode 追加模式：标记段只出现一次，用户原文保留，连注入三次体积不变
+- 无 BOM 的 UTF-16LE 目标：注入后按 UTF-8 可读，还原后逐字节一致
+
 ---
 
 ## 从源码跑
@@ -328,12 +351,19 @@ python app.py watch                      # 常驻守护，被覆盖了自动补
 
 ```bash
 python -m pip install pyinstaller
+python tools/make_version_info.py     # 从 app.py:VERSION 生成版本资源
 pyinstaller xiaoxiongmao.spec
 ```
 
 产物在 `dist/xiaoxiongmao.exe`。onefile、无控制台窗口，界面和人格都内联进包，不挂外链资源。
 
-`build/icon.ico` 和 `build/version_info.txt` 是可选的 —— spec 里按「存在才用」处理。不放也能出包，只是用默认图标。
+`build/` 在 `.gitignore` 里（构建产物不该进库），所以从仓库直接 clone 下来是没有版本资源和图标的。版本资源用上面的 `make_version_info.py` 生成 —— 它只从 `app.py:VERSION` 读版本号，把 `filevers` / `prodvers` / `FileVersion` / `ProductVersion` 四处一次写完，不会漏。图标是二进制，需要自己准备 `build/icon.ico`；不放也能出包，只是用默认图标。
+
+打完先验一遍再发：
+
+```bash
+python tools/verify_release.py
+```
 
 <details>
 <summary><b>跑测试（点开）</b></summary>
@@ -403,6 +433,8 @@ python -m pytest tests/ -q
 | `server/` | 服务端：版本下发 + 品牌配置 + 后台（可选，不影响注入） |
 | `tests/` | 52 个测试 |
 | `tools/check_clean.py` | 仓库门禁（CI 也调它） |
+| `tools/verify_release.py` | 打包产物校验：PE 版本资源 + 沙箱里跑真 exe |
+| `tools/make_version_info.py` | 从 `app.py:VERSION` 生成 `build/version_info.txt` |
 | `xiaoxiongmao.spec` | PyInstaller 打包配置 |
 | `docs/targets.md` | 四个客户端的靶点对照表 |
 | `docs/deploy.md` | 服务端部署说明 |
