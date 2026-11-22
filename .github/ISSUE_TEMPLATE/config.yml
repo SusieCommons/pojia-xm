@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/OWNER/xiaoxiongmao/security/advisories/new
+    about: 不要开公开 issue，走私有的漏洞报告
+  - name: 先读文档
+    url: https://github.com/OWNER/xiaoxiongmao#readme
+    about: README 里写了编码契约、还原机制和已知限制

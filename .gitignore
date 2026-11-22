@@ -1,0 +1,61 @@
+# 构建产物
+build/
+dist/
+*.exe
+*.dll
+*.pyd
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.map
+*.pyz
+*.spec.bak
+
+# 缓存
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pyibuild/
+.mypy_cache/
+.ruff_cache/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 本机配置与运行数据
+site.toml
+config.json
+*.local.toml
+data.db
+*.db
+*.sqlite3
+
+# 密钥 —— 这几条是硬规则，任何情况下都不进库
+secret.key
+*secret*.key
+signer.key
+_keys/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 日志与临时
+*.log
+*.tmp
+*.bak
+*.orig
+.tmp/
+_manifest.json
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
