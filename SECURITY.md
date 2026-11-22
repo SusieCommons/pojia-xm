@@ -4,7 +4,7 @@
 
 发现安全问题请**不要**开公开 issue。用 GitHub 的私有漏洞报告：
 
-<https://github.com/z91772524-ai/pojia-xm/security/advisories/new>
+<https://github.com/SusieCommons/pojia-xm/security/advisories/new>
 
 或者发邮件到仓库主页列出的联系方式。
 

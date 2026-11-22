@@ -39,7 +39,7 @@
 
 | 方式 | 适合谁 | 怎么做 |
 | --- | --- | --- |
-| 预编译 exe | 不想装 Python | 从 [Releases](https://github.com/z91772524-ai/pojia-xm/releases/latest) 下载 `xiaoxiongmao-<版本>.exe`，双击 |
+| 预编译 exe | 不想装 Python | 从 [Releases](https://github.com/SusieCommons/pojia-xm/releases/latest) 下载 `xiaoxiongmao-<版本>.exe`，双击 |
 | 从源码跑 | 想看代码 / 自己改 | 见[从源码跑](#从源码跑) |
 
 单文件 exe，**电脑上不用装 Python**，放哪都行（桌面就行）。
@@ -297,7 +297,7 @@ python tools/check_clean.py --history
 ## 从源码跑
 
 ```bash
-git clone https://github.com/z91772524-ai/pojia-xm
+git clone https://github.com/SusieCommons/pojia-xm
 cd pojia-xm
 python -m pip install -r requirements.txt
 python app.py
