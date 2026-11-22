@@ -35,6 +35,55 @@ def test_allows_localhost():
         assert not any(re.search(p, url) for p in pats), url
 
 
+# 裸 IP（不在 URL 里）是后补的规则。起因是白名单配置里的 `allow <IP>;`
+# 里留了一个真实的出口 IP `allow 203.0.113.10;`，而当时的门禁只认
+# URL 里的 IP，这条一路绿灯过了。
+BARE = "硬编码公网 IP（裸）"
+
+
+def _bare_pat():
+    return [p for p, n in cc.FORBIDDEN_TEXT if n == BARE]
+
+
+def test_detects_bare_ip():
+    import re
+    pat = _bare_pat()
+    assert pat, "裸 IP 规则不见了"
+    for s in ("allow 203.0.113.10;", "bind 8.8.8.8", "host 93.184.216.34"):
+        assert any(re.search(p, s) for p in pat), s
+
+
+def test_bare_ip_allows_private_and_reserved():
+    """私网、回环、文档保留段都不该拦 —— 它们在示例配置里必然出现。"""
+    import re
+    pat = _bare_pat()
+    for s in ("allow 127.0.0.1;", "allow 10.1.2.3;", "allow 192.168.1.1;",
+              "allow 172.16.5.4;", "allow 169.254.1.1;", "0.0.0.0",
+              "allow 203.0.113.10;", "allow 198.51.100.7;"):
+        assert not any(re.search(p, s) for p in pat), s
+
+
+def test_bare_ip_allows_non_ip_numbers():
+    """段值超过 255 的四段数字不是 IP。
+
+    注意 `1.5.2.9` 这类**不能**放进这个测试 —— 它是合法公网地址，
+    规则拦它是对的。这里只用真正越界的数值。
+    """
+    import re
+    pat = _bare_pat()
+    for s in ("transform: translate(2.774.868.86)", "1.999.888.777",
+              "margin: 300.400.500.600"):
+        assert not any(re.search(p, s) for p in pat), s
+
+
+def test_bare_ip_172_edge():
+    """172.16/12 是私网，172.32 不是 —— 边界不能写宽。"""
+    import re
+    pat = _bare_pat()
+    assert not any(re.search(p, "172.31.255.254") for p in pat)
+    assert any(re.search(p, "172.32.0.1") for p in pat)
+
+
 def test_detects_qr_image():
     import re
     pats = [p for p, n in cc.FORBIDDEN_TEXT if "二维码" in n]
