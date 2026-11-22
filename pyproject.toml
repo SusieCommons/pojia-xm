@@ -41,9 +41,9 @@ dev = [
 xm = "xm:main"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/xiaoxiongmao"
-Repository = "https://github.com/OWNER/xiaoxiongmao"
-Issues = "https://github.com/OWNER/xiaoxiongmao/issues"
+Homepage = "https://github.com/z91772524-ai/xiaoxiongmao"
+Repository = "https://github.com/z91772524-ai/xiaoxiongmao"
+Issues = "https://github.com/z91772524-ai/xiaoxiongmao/issues"
 
 [tool.setuptools]
 packages = ["core"]
