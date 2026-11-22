@@ -4,12 +4,6 @@
 
 支持 **Codex / WorkBuddy / ZCode / DSH** 四个客户端，一份 `persona.md` 全管，口径一致。
 
-> ### 只从本项目 GitHub Releases 下载
-> 唯一的官方来源是 [github.com/z91772524-ai/pojia-xm](https://github.com/z91772524-ai/pojia-xm) 和它的 Releases 页面。
-> 从任何其他网站、网盘、群文件拿到的 exe 都不受本项目控制 —— 对不上哈希就不要运行。
->
-> ⚠️ **风险提示**：本工具修改第三方客户端的本地提示词文件，处于客户端使用条款的灰色地带 —— **账号风险自负**。介意者请勿使用，或用完点「还原」。
-
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-0078d4)](#项目边界)
@@ -70,7 +64,6 @@
 > ### ⚠️ Windows 拦我？
 > 没有代码签名证书的 exe，SmartScreen 可能会弹「Windows 已保护你的电脑」——
 > 这是无签名 exe 的常态。点 **「更多信息」→「仍要运行」** 即可。
-> 不放心的话先核哈希，并且**只认官方渠道**（本仓库 Releases）。
 
 ---
 
