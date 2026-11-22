@@ -35,9 +35,10 @@ def test_allows_localhost():
         assert not any(re.search(p, url) for p in pats), url
 
 
-# 裸 IP（不在 URL 里）是后补的规则。起因是白名单配置里的 `allow <IP>;`
-# 里留了一个真实的出口 IP `allow 203.0.113.10;`，而当时的门禁只认
-# URL 里的 IP，这条一路绿灯过了。
+# 裸 IP（不在 URL 里）是后补的规则。起因是白名单配置里留了一个真实的
+# 出口 IP，而当时的门禁只认 URL 里的地址，那条一路绿灯过了。
+# 测试里用文档保留段（203.0.113.x）当样本 —— 它本身就是「示例专用」，
+# 放真地址进来等于又泄一次。
 BARE = "硬编码公网 IP（裸）"
 
 
@@ -49,7 +50,9 @@ def test_detects_bare_ip():
     import re
     pat = _bare_pat()
     assert pat, "裸 IP 规则不见了"
-    for s in ("allow 203.0.113.10;", "bind 8.8.8.8", "host 93.184.216.34"):
+    # 样本用公网 DNS / benchmark 段 / 一个普通公网段，不用真实业务地址 ——
+    # 测试文件也是要公开的，写进去等于换个地方再泄一次。
+    for s in ("allow 198.18.7.42;", "bind 8.8.8.8", "host 93.184.216.34"):
         assert any(re.search(p, s) for p in pat), s
 
 
