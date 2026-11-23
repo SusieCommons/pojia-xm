@@ -23,6 +23,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from core import LABELS, ORDER, all_targets, resolve  # noqa: E402
+from core.zh_argparse import apply_zh  # noqa: E402
 
 TITLE = "小熊猫破甲"
 SUB = "自动识别已装的 AI 客户端，选一个注入"
@@ -224,6 +225,9 @@ def gui() -> int:
 # ---------------------------------------------------------------- 入口
 
 def main(argv=None) -> int:
+    # argparse 的 usage / positional arguments / options 等文案默认是英文，
+    # 在 ArgumentParser 构造之前接管 _()，之后加上的 -h 选项才会用中文。
+    apply_zh()
     ap = argparse.ArgumentParser(prog="xm", description=TITLE)
     ap.add_argument("cmd", nargs="?", default="gui",
                     choices=["gui", "status", "apply", "revert"])

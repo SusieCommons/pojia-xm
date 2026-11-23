@@ -14,7 +14,9 @@
 - 注入与还原拆成两个函数：`write_like()` 写 UTF-8，`write_orig()` 写原始字节。合并会同时踩上面两个坑。
 - 新增 `tools/verify_release.py`：对打包产物做校验，静态读 PE 版本资源与图标，动态在沙箱里跑真 exe 走完注入 / 校验 / 还原。CI 增加 `build` job，从源码打一次包再验，证明打包链路是通的。
 - 新增 `tools/make_version_info.py`：版本号只从 `app.py:VERSION` 读，一次写完 `filevers` / `prodvers` / `FileVersion` / `ProductVersion`。`build/` 不进库，CI 打包前得靠它生成版本资源，否则打出来的 exe 没有 VS_VERSIONINFO。
+- **命令行帮助与错误提示全中文化。** 界面上从文档到按钮都是中文，只有 `--help` 的输出是英文骨架（`usage:` / `positional arguments:` / `options:` / `show this help message and exit`），很割裂。新增 `core/zh_argparse.py` 接管 argparse 的 `_()`，覆盖 29 条内置文案，`app.py` 与 `xm.py` 两个入口共用同一份表。注意必须在构造 `ArgumentParser` **之前**调用 —— `add_help=True` 在构造时就把 `-h` 的帮助文字固化下来了，晚一步改不到。
 - 测试里 `test_gbk` 的旧断言已改。它原本写的是「GBK 文件没被改成 UTF-8」，把 1.3.7 修掉的错误行为固化成了预期。
+- 新增 `tests/test_zh_cli.py`：锁住命令行的中文输出。除了校验翻译表覆盖与幂等，还真跑一遍 `app.py --help` / `xm.py --help` / 一条错误路径，确认既没有漏翻也没有回退成英文。
 
 ## [1.3.6] - 2026-11-21
 

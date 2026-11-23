@@ -40,6 +40,7 @@
 
 - 注入与还原彻底拆成两个函数（`write_like()` / `write_orig()`）。合并成一个「按原编码写回」的函数会同时踩上面两个坑。
 - 测试里 `test_gbk` 的旧断言是错的，已改。它当时写的是 `ck("GBK 文件没被改成 UTF-8", not is_utf8)` —— 把错误行为固化成了预期，留着比没测试更危险。
+- 命令行帮助全中文化。`--help` 原来冒出 `usage:` / `positional arguments:` / `options:` / `show this help message and exit` 四句英文，报错时还有 `error:` 前缀。`core/zh_argparse.py` 接管 argparse 的 `_()`，29 条内置文案一起换掉，`app.py` 和 `xm.py` 两个入口共用同一份表。必须在构造 `ArgumentParser` 之前调用 —— `add_help=True` 在构造时就把 `-h` 的帮助文字固化到选项上了。
 
 ---
 
@@ -55,7 +56,7 @@ SHA-256       507711c937600096089fdd88fe4ab86012f1cdc00b7119d59155882f242016e6
 自检（需要 Python 3.10+）：
 
 ```bash
-python -m pytest tests/ -q                    # 52 passed
+python -m pytest tests/ -q                    # 63 passed
 python tools/verify_release.py                # 30 项全过
 ```
 

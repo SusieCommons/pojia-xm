@@ -36,6 +36,7 @@ from core import licnet  # noqa: E402
 from core import proc  # noqa: E402
 from core import ticket  # noqa: E402
 from core import update  # noqa: E402
+from core.zh_argparse import apply_zh  # noqa: E402
 from core import license as lic  # noqa: E402
 from core import base as core_base  # noqa: E402
 from core.base import (DATA_DIR, list_backups, load_state,  # noqa: E402
@@ -2294,6 +2295,12 @@ def main(argv=None) -> int:
             print(VERSION)
             return 0
 
+    # argparse 的小标题和内置错误文案是英文的（usage / positional arguments /
+    # options / show this help message and exit / error: ...）。这个工具从界面
+    # 到文档全是中文，帮助信息突然冒出几句英文很割裂，所以换成中文。
+    # 必须在 ArgumentParser 构造之前调用：add_help 在构造时就把
+    # "show this help message and exit" 的译文固化到 -h 选项上了。
+    apply_zh()
     ap = argparse.ArgumentParser(prog="xm", description=APP_NAME)
     ap.add_argument("cmd", nargs="?", default="gui",
                     choices=["gui", "status", "apply", "revert", "verify",

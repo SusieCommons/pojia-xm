@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-0078d4)](#项目边界)
-[![tests](https://img.shields.io/badge/tests-52%20passed-2ea043)](tests/)
+[![tests](https://img.shields.io/badge/tests-63%20passed-2ea043)](tests/)
 [![deps](https://img.shields.io/badge/运行依赖-2%20个-brightgreen)](requirements.txt)
 [![offline](https://img.shields.io/badge/注入-全程离线-2ea043)](#安全设计)
 
@@ -372,7 +372,7 @@ python tools/verify_release.py
 python -m pytest tests/ -q
 ```
 
-52 个，覆盖的是「真机会遇到但常规测试不会碰」的情形：
+63 个，覆盖的是「真机会遇到但常规测试不会碰」的情形：
 
 - 目标文件是 GBK / UTF-16（带 BOM / 不带 BOM）
 - 文件带只读属性
@@ -384,6 +384,7 @@ python -m pytest tests/ -q
 - 中文用户名路径
 - 空文件（0 字节）
 - 注入两次再还原（历史 bug 的现场）
+- 命令行帮助是中文的（`core/zh_argparse.py` 接管 argparse 的 `_()`，`app.py` / `xm.py` 两个入口都不许漏回英文）
 
 全部在临时目录里跑，不碰真实客户端。`tests/conftest.py` 把所有客户端环境变量指向临时目录 —— 跑测试不会动你机器上的任何配置。
 
@@ -425,13 +426,14 @@ python -m pytest tests/ -q
 | `xm.py` | CLI 薄包装（`pip install -e .` 之后是 `xm`） |
 | `persona.md` | 唯一共用人格源，四个客户端共用这一份 |
 | `core/base.py` | 注入引擎：编码、原子写、标记段、备份、状态 |
+| `core/zh_argparse.py` | 把 argparse 的骨架文案换成中文（两个入口共用） |
 | `core/codex.py` | Codex 靶点（配置键 + 正文文件） |
 | `core/wb.py` | WorkBuddy 靶点（`<content_policy>` 段 + 多版本目录） |
 | `core/zcode.py` | ZCode 靶点 |
 | `core/dsh.py` | DSH 靶点 |
 | `ui/index.html` | 界面（单文件，图标全内联） |
 | `server/` | 服务端：版本下发 + 品牌配置 + 后台（可选，不影响注入） |
-| `tests/` | 52 个测试 |
+| `tests/` | 63 个测试 |
 | `tools/check_clean.py` | 仓库门禁（CI 也调它） |
 | `tools/verify_release.py` | 打包产物校验：PE 版本资源 + 沙箱里跑真 exe |
 | `tools/make_version_info.py` | 从 `app.py:VERSION` 生成 `build/version_info.txt` |
