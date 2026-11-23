@@ -1,6 +1,9 @@
 # 构建产物
 build/
 dist/
+# 临时打包目录：PyInstaller 的 workpath 里是绝对路径 TOC，会被门禁拦
+_dist*/
+_wp*/
 *.exe
 *.dll
 *.pyd
