@@ -454,7 +454,6 @@ python -m pytest tests/ -q
 | `xiaoxiongmao.spec` | PyInstaller 打包配置 |
 | `docs/targets.md` | 四个客户端的靶点对照表 |
 | `docs/deploy.md` | 服务端部署说明 |
-| `docs/repo-copy.md` | 仓库页文案：About 描述、topics、Social preview 上写什么字 |
 | `CHANGELOG.md` | 每个版本改了什么、升级要注意什么 |
 
 ---

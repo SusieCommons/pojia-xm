@@ -103,8 +103,44 @@ def test_allows_mentioning_keyword():
 
 
 def test_known_ids_blocked():
-    assert "GROUP_ID_A" in cc.KNOWN_IDS
-    assert "GROUP_ID_B" in cc.KNOWN_IDS
+    """指纹表非空，且比对逻辑真的能命中。
+
+    这里**不写真实号码** —— 测试文件也是公开的，把号码放进断言等于
+    换个地方再泄一次。改用构造样本：随便取一个串，把它的指纹临时塞进
+    表里，验证 `_find_known_ids` 能认出来。
+    """
+    sample = "998877665544"          # 虚构号码，不存在于任何真实账号
+    expect = cc._id_sha16(sample)
+    cc.KNOWN_ID_HASHES.add(expect)
+    try:
+        # 三种写法都要命中：裸串、被引号包住、在注释里
+        for line in (sample,
+                     'group_no = "%s"' % sample,
+                     "# 联系 %s 进群" % sample):
+            hits = cc._find_known_ids(line)
+            assert hits, "没拦住：%r" % line
+            assert all(h == expect for _, h in hits)
+            # 只返回指纹，绝不返回明文
+            assert sample not in repr(hits)
+    finally:
+        cc.KNOWN_ID_HASHES.discard(expect)
+
+
+def test_known_ids_not_leaked_in_source():
+    """门禁源码里不得出现任何真实号码的明文。
+
+    这是回归测试：上一版把群号直接写在 KNOWN_IDS 里，同时又把自己放进
+    SELF_EXEMPT，于是「泄露者不检查自己」，门禁一路绿灯推了上去。
+    """
+    src = io.open(ROOT / "tools" / "check_clean.py", encoding="utf-8").read()
+    for h in cc.KNOWN_ID_HASHES:
+        assert h in src, "指纹 %s 不在源码里？" % h
+    # 源码里所有 8-24 位连续串，其指纹都不该命中已知表
+    import re
+    for m in re.finditer(r"(?<![0-9A-Za-z])([0-9A-Za-z]{8,24})(?![0-9A-Za-z])", src):
+        cand = m.group(1)
+        assert cc._id_sha16(cand) not in cc.KNOWN_ID_HASHES, \
+            "源码里出现了已知号码的明文：%r" % cand
 
 
 def test_worktree_is_clean():
