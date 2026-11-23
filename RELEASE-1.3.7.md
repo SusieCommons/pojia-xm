@@ -49,8 +49,8 @@
 ```
 FileVersion   1.3.7
 ProductVersion 1.3.7
-体积          13,247,305 B
-SHA-256       507711c937600096089fdd88fe4ab86012f1cdc00b7119d59155882f242016e6
+体积          13,251,314 B
+SHA-256       d2d5f4a551cfc8ca90572ec849f386286b225e6e7b6bb953e3fe00fd3d04c950
 ```
 
 自检（需要 Python 3.10+）：
