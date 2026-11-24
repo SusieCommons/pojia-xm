@@ -419,14 +419,21 @@ def verify() -> list[str]:
     """内置默认值的自检。返回问题列表，空 = 正常。
 
     只查内置常量本身（这部分写死在 exe 里）；远端内容由验签兜着，不走这里。
+
+    注意不要在这里写「群号必须等于 100000000」这种断言。发布包是打包时
+    注入真号的（`tools/make_brand.py`），源码仓里才是占位值 —— 断死某一个
+    号码会让注入后的包自检失败，用户看到「[异常] 群号被改过」而其实一切正常。
+    要查的是**形状**：格式对不对、名字空不空、公钥长度对不对。
     """
     bad: list[str] = []
     if not _RE_GROUP_NO.match(DEFAULT_GROUP_NO):
-        bad.append(f"群号格式不对：{DEFAULT_GROUP_NO!r}")
-    if DEFAULT_GROUP_NO != "100000000":
-        bad.append(f"群号被改过：{DEFAULT_GROUP_NO}（应为 100000000）")
-    if DEFAULT_GROUP_NAME != "小熊猫交流群":
-        bad.append(f"群名被改过：{DEFAULT_GROUP_NAME}（应为 小熊猫交流群）")
+        bad.append(f"群号格式不对：{DEFAULT_GROUP_NO!r}（应为 5-12 位数字）")
+    if not DEFAULT_GROUP_NAME.strip():
+        bad.append("群名是空的")
+    if len(DEFAULT_GROUP_NAME) > MAX_NAME:
+        bad.append(f"群名超长：{len(DEFAULT_GROUP_NAME)} 字（上限 {MAX_NAME}）")
+    if len(DEFAULT_TIP) > MAX_TIP:
+        bad.append(f"话术超长：{len(DEFAULT_TIP)} 字（上限 {MAX_TIP}）")
     if len(_b64d(PUBLIC_KEY_B64)) != 32:
         bad.append("内置公钥不是 32 字节")
     return bad

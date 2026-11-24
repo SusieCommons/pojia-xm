@@ -47,10 +47,10 @@
 ### 校验
 
 ```
-FileVersion   1.3.7
+FileVersion    1.3.7
 ProductVersion 1.3.7
-体积          13,251,314 B
-SHA-256       d2d5f4a551cfc8ca90572ec849f386286b225e6e7b6bb953e3fe00fd3d04c950
+体积           16,337,660 B
+SHA-256        894cff833c80d3c48374d58b1ddcaacab369bc753732f4d0f95b0c3328bc3202
 ```
 
 自检（需要 Python 3.10+）：
@@ -67,3 +67,14 @@ python tools/verify_release.py                # 30 项全过
 覆盖旧 exe 即可。数据目录（`~/.xiaoxiongmao`）里的备份和 `consent.json` 不动，还原记录继续有效。
 
 如果上一版注入过 GBK 文件、客户端里读出来是乱码，这一版重跑一次「一键破甲」就好 —— 它会用 UTF-8 重写一遍。
+
+### 包体积为什么从 13.2 MB 涨到 15.6 MB
+
+上一版打漏了图形界面。看归档就知道：
+
+```
+旧包  webview 0 条  pythonnet 0 条  clr_loader 0 条   ← 纯命令行
+新包  webview 14 条 pythonnet 3 条  clr_loader 2 条   ← WebView2 界面在这儿
+```
+
+原因是打包用了没装 `pywebview` 的解释器，`Analysis` 找不到这个依赖就静默跳过 —— 包还是打出来了，命令行功能全对，只是双击没有窗口。多出来的约 3 MB 就是 WebView2 那套绑定。现在用固定依赖的虚拟环境打包，归档里能数到上面这些条目才算打对了。

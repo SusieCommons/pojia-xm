@@ -409,15 +409,30 @@ python tools/verify_release.py
 ```
 
 <details>
-<summary><b>想换成自己的人格 / 自己的品牌行（点开）</b></summary>
+<summary><b>想换成自己的群 / 自己的品牌行（点开）</b></summary>
 
-仓库里的 `persona.md` 用的是占位群号 `100000000` 和示例群名。换成你自己的：
+直接改源码是不行的 —— `tools/check_clean.py` 里存着已知引流号码的 SHA-256
+指纹，扫工作区和全部历史，命中就 CI 红。真实群号写进被跟踪的文件，这个仓库
+就推不上去了。
 
-1. 改 `persona.md` 正文，把署名行换成你要的内容。
-2. 改 `core/brand.py` 顶部的三个常量：`DEFAULT_GROUP_NO` / `DEFAULT_GROUP_NAME` / `DEFAULT_TIP`。
-3. 重新打包。exe 里读不到外部配置，这些值必须编进去。
+所以走**打包时注入**：源码里始终是占位值，打包前生成一份副本，只换品牌常量。
 
-`core/brand.py:verify()` 会检查这三个常量还在不在原始占位值上 —— 改过之后这项检查会报出来，是预期行为，不是 bug。
+```bash
+# 1. 生成注入副本到 build/brand_local/（不进库）
+python tools/make_brand.py --group <你的群号> --name <群名>
+
+# 2. 从副本打包
+cd build/brand_local
+python -m PyInstaller --noconfirm xiaoxiongmao.spec
+
+# 3. 确认号真的换进去了
+python tools/make_brand.py --check build/brand_local/core/brand.py
+```
+
+第 3 步别省。包里的群号还是占位值时，`--check` 会直接说不合格 ——
+这种包发出去，用户看到的是加不进的号。副本会替换三处：`core/brand.py`
+的三个常量、`persona.md` 里的署名行（人格正文落进客户端后也得是真号，
+否则用户从人格卡里抄到的是假号）。
 
 </details>
 
