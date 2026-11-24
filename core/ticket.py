@@ -92,8 +92,8 @@ def remain(data_dir: Path) -> int:
 def build_hash() -> str:
     """1.2.x 用来算自身 exe 的 SHA-256 报给服务端验白名单。
 
-    1.3.0 不再有白名单，但这个值仍被旧发布脚本读取 —— 保留
-    一个实现，让那些脚本不至于崩。冻结态算 exe，源码态算 app.py。
+    1.3.0 不再有白名单，但这个值仍被旧发布脚本读取 —— 保留一个实现，
+    让那些脚本不至于崩。冻结态算 exe，源码态算 app.py。
     """
     import hashlib
     import sys
