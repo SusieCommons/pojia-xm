@@ -34,7 +34,7 @@ jobs:
           python -m pip install pytest
 
       - name: 语法检查
-        run: python -m compileall -q app.py xm.py core server bot tests
+        run: python -m compileall -q app.py xm.py core tests tools
 
       - name: 测试
         run: python -m pytest tests/ -q

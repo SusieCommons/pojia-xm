@@ -8,7 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-0078d4)](#项目边界)
-[![tests](https://img.shields.io/badge/tests-63%20passed-2ea043)](tests/)
+[![tests](https://img.shields.io/badge/tests-64%20passed-2ea043)](tests/)
 [![deps](https://img.shields.io/badge/运行依赖-2%20个-brightgreen)](requirements.txt)
 [![offline](https://img.shields.io/badge/破甲-全程离线-2ea043)](#安全设计)
 
@@ -106,7 +106,7 @@
 | **会不会偷偷联网 / 上传我的数据？** | **破甲全程不联网**。版本检查和品牌信息是可选增强，拿不到就用内置默认值，不锁功能、不弹窗 |
 | **会不会删我的东西？** | 只做文本文件层面的替换。**不删包、不碰注册表、不装服务、不常驻后台**。判不出来是不是本工具产物时，一个字节都不动 |
 | **写到一半断电会写坏吗？** | 所有写入走**临时文件 + `os.replace`**，要么全成、要么原文件不动。写到一半被打断只会留下残块，下次运行会自动识别并清掉 |
-| **是不是要花钱？** | **开源（MIT）**，下载即用。1.3.0 起已取消在线授权 —— 没有激活码、没有机器码、没有 token |
+| **是不是要花钱？** | **开源（MIT）**，下载即用。1.3.0 起已取消在线授权 —— 没有激活码、没有 token、没有联网校验，装完直接能用 |
 
 ---
 
@@ -380,13 +380,26 @@ python tools/verify_release.py
 ```
 
 <details>
+<summary><b>想换成自己的人格 / 自己的品牌行（点开）</b></summary>
+
+仓库里的 `persona.md` 用的是占位群号 `100000000` 和示例群名。换成你自己的：
+
+1. 改 `persona.md` 正文，把署名行换成你要的内容。
+2. 改 `core/brand.py` 顶部的三个常量：`DEFAULT_GROUP_NO` / `DEFAULT_GROUP_NAME` / `DEFAULT_TIP`。
+3. 重新打包。exe 里读不到外部配置，这些值必须编进去。
+
+`core/brand.py:verify()` 会检查这三个常量还在不在原始占位值上 —— 改过之后这项检查会报出来，是预期行为，不是 bug。
+
+</details>
+
+<details>
 <summary><b>跑测试（点开）</b></summary>
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-63 个，覆盖的是「真机会遇到但常规测试不会碰」的情形：
+64 个，覆盖的是「真机会遇到但常规测试不会碰」的情形：
 
 - 目标文件是 GBK / UTF-16（带 BOM / 不带 BOM）
 - 文件带只读属性
@@ -446,14 +459,12 @@ python -m pytest tests/ -q
 | `core/zcode.py` | ZCode 靶点 |
 | `core/dsh.py` | DSH 靶点 |
 | `ui/index.html` | 界面（单文件，图标全内联） |
-| `server/` | 服务端：版本下发 + 品牌配置 + 后台（可选，不影响破甲） |
-| `tests/` | 63 个测试 |
+| `tests/` | 64 个测试 |
 | `tools/check_clean.py` | 仓库门禁（CI 也调它） |
 | `tools/verify_release.py` | 打包产物校验：PE 版本资源 + 沙箱里跑真 exe |
 | `tools/make_version_info.py` | 从 `app.py:VERSION` 生成 `build/version_info.txt` |
 | `xiaoxiongmao.spec` | PyInstaller 打包配置 |
 | `docs/targets.md` | 四个客户端的靶点对照表 |
-| `docs/deploy.md` | 服务端部署说明 |
 | `CHANGELOG.md` | 每个版本改了什么、升级要注意什么 |
 
 ---
