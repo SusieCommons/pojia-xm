@@ -17,7 +17,7 @@
 - **命令行帮助与错误提示全中文化。** 界面上从文档到按钮都是中文，只有 `--help` 的输出是英文骨架（`usage:` / `positional arguments:` / `options:` / `show this help message and exit`），很割裂。新增 `core/zh_argparse.py` 接管 argparse 的 `_()`，覆盖 29 条内置文案，`app.py` 与 `xm.py` 两个入口共用同一份表。注意必须在构造 `ArgumentParser` **之前**调用 —— `add_help=True` 在构造时就把 `-h` 的帮助文字固化下来了，晚一步改不到。
 - 测试里 `test_gbk` 的旧断言已改。它原本写的是「GBK 文件没被改成 UTF-8」，把 1.3.7 修掉的错误行为固化成了预期。
 - 新增 `tests/test_zh_cli.py`：锁住命令行的中文输出。除了校验翻译表覆盖与幂等，还真跑一遍 `app.py --help` / `xm.py --help` / 一条错误路径，确认既没有漏翻也没有回退成英文。
-- **文案与关键词铺开。** README 一级标题改成 `小熊猫破甲 · pojia`，首屏加了一段解释「为什么叫破甲和 pojia」；用户视角的句子（按钮、离线说明、FAQ）从「注入」改说「破甲」，技术章节里的「注入」保留原词，因为讲的是实现。新增 `docs/repo-copy.md`：仓库页 About 描述、10 个 topics、Social preview 上写什么字，全部落成可直接复制粘贴的文案。
+- **文案与关键词铺开。** README 一级标题改成 `小熊猫破甲 · pojia`，首屏加了一段解释「为什么叫破甲和 pojia」；用户视角的句子（按钮、离线说明、FAQ）从「注入」改说「破甲」，技术章节里的「注入」保留原词，因为讲的是实现。
 - 修掉 README 里两个死链锚点：`## 🔬 安全设计` 的 emoji 会让锚点变成 `-安全设计`，改标题去掉 emoji 后 `#安全设计` 恢复有效；`#编码契约` 与 `#安全设计` 两条都已验证可达（7 个内部链接 0 失效）。
 - `pyproject.toml` 的 `description` 与 `keywords` 同步：描述改成和 GitHub About 一致的版本，keywords 加 `pojia` / `xiaoxiongmao` / `破甲`。
 

@@ -56,7 +56,7 @@ SHA-256       d2d5f4a551cfc8ca90572ec849f386286b225e6e7b6bb953e3fe00fd3d04c950
 自检（需要 Python 3.10+）：
 
 ```bash
-python -m pytest tests/ -q                    # 63 passed
+python -m pytest tests/ -q                    # 64 passed
 python tools/verify_release.py                # 30 项全过
 ```
 
