@@ -308,33 +308,28 @@ python tools/check_clean.py --history
 
 ### 下载后自己核一遍
 
-仓库根目录有 `SHA256SUMS.txt`，覆盖全部跟踪文件。**清单按 LF 行尾计算**，所以核对前先把工作区统一成 LF：
+仓库根目录有 `SHA256SUMS.txt`，覆盖全部跟踪文件。仓库带 `.gitattributes` 声明 `* text=auto eol=lf`，clone 下来就是 LF，不用额外设置。
+
+最省事的是直接用脚本，它在算哈希前会把 CRLF 折成 LF，行尾怎么设置都能对上：
 
 ```bash
-git config core.autocrlf false      # 仓库已带 .gitattributes，这一步只是把已有的 clone 拉正
-rm -f $(git ls-files) && git checkout -- .   # 重新检出，行尾按 .gitattributes 走
+python tools/make_sums.py --check
 ```
 
-然后逐项核对：
+要通过系统自带工具逐项核对也行：
 
 ```bash
 # Linux / macOS
 sha256sum -c SHA256SUMS.txt
 
-# Windows PowerShell（逐项）
+# Windows PowerShell
 Get-Content SHA256SUMS.txt | ForEach-Object {
   $h, $f = $_ -split '  ', 2
   if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h.ToUpper()) { "MISMATCH: $f" }
 }
 ```
 
-最省事的是直接用脚本，它内部会把 CRLF 折成 LF 再算，行尾怎么设置都能对：
-
-```bash
-python tools/make_sums.py --check
-```
-
-**为什么清单按 LF 算**：仓库带 `.gitattributes` 声明 `* text=auto eol=lf`，但 `core.autocrlf=true` 的用户 clone 下来仍然是 CRLF。拿工作区原始字节算哈希，同一份提交在不同机器上会得出不同结果，清单就失去意义了。折成 LF 之后，任何行尾设置下结果都一样。
+**为什么脚本要先折成 LF 再算**：`.gitattributes` 管的是 checkout 时的规范化，管不到 `core.autocrlf` 已经把已有工作区改成什么样，也管不到手工编辑过的文件。拿工作区原始字节直接算哈希，同一份内容在不同机器上会得出不同结果，清单就失去意义了。归一之后两边的结果一致，出问题的只可能是文件内容本身。
 
 CI 每次都会跑这一步，对不上直接红 —— 清单和源码不可能长期不一致。
 
