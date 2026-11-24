@@ -54,6 +54,8 @@ _keys/
 *.orig
 .tmp/
 _manifest.json
+# 发版留档：Release 正文、上传脚本、本地对账输出
+_release/
 
 # 编辑器
 .vscode/
