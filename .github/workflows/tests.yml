@@ -96,3 +96,8 @@ jobs:
 
       - name: 历史里也不能有
         run: python tools/check_clean.py --history
+
+      # SHA256SUMS.txt 覆盖仓库全部文件。它是给下载方自查完整性用的，
+      # 所以必须跟着源码一起变；对不上说明有人改了文件没重跑生成脚本。
+      - name: 清单与文件一致
+        run: python tools/make_sums.py --check

@@ -306,6 +306,25 @@ python tools/check_clean.py --history
 
 查工作区 + git 历史里有没有私钥、生产地址、本机绝对路径。CI 跑同一份，规则只有一处。
 
+### 下载后自己核一遍
+
+仓库根目录有 `SHA256SUMS.txt`，覆盖全部跟踪文件。clone 或下载 zip 之后可以逐项核对：
+
+```bash
+# Linux / macOS
+sha256sum -c SHA256SUMS.txt
+
+# Windows PowerShell（逐项）
+Get-Content SHA256SUMS.txt | ForEach-Object {
+  $h, $f = $_ -split '  ', 2
+  if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h.ToUpper()) { "MISMATCH: $f" }
+}
+```
+
+`python tools/make_sums.py --check` 是同一个校验的脚本版。CI 每次都会跑，对不上直接红 —— 所以清单和源码不可能长期不一致。
+
+Release 里那个 exe 的哈希单独发布在 Release 正文，因为仓库里的清单只覆盖源码，exe 不进库。
+
 ### 产物校验
 
 单元测试覆盖的是源码逻辑，打包链路是另一回事 —— spec 漏文件、入口找不到、图标路径写错，这些只有真打一次才暴露。所以发版前还要验产物：
@@ -461,6 +480,7 @@ python -m pytest tests/ -q
 | `ui/index.html` | 界面（单文件，图标全内联） |
 | `tests/` | 64 个测试 |
 | `tools/check_clean.py` | 仓库门禁（CI 也调它） |
+| `tools/make_sums.py` | 生成并校验 `SHA256SUMS.txt` |
 | `tools/verify_release.py` | 打包产物校验：PE 版本资源 + 沙箱里跑真 exe |
 | `tools/make_version_info.py` | 从 `app.py:VERSION` 生成 `build/version_info.txt` |
 | `xiaoxiongmao.spec` | PyInstaller 打包配置 |
