@@ -32,13 +32,30 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_text_normalized(path: Path) -> str:
+    """按「仓库内容」算哈希：先把 CRLF 折成 LF 再算。
+
+    为什么需要这个：仓库里有 .gitattributes 声明 text=auto eol=lf，
+    但 `core.autocrlf=true` 的用户 clone 下来仍是 CRLF（那是工作区行为，
+    .gitattributes 的 eol 只影响 checkout 后的规范化，不改用户配置）。
+    拿工作区字节直接算哈希，同一份提交在不同机器上会得出不同结果 ——
+    校验清单就失去意义了。
+
+    统一按 LF 算，两边才对得上。
+    """
+    data = path.read_bytes()
+    if b"\r\n" in data:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
 def build() -> str:
     lines = []
     for rel in sorted(tracked_files()):
         p = ROOT / rel
         if not p.exists():
             continue
-        lines.append("%s  %s" % (sha256(p), rel.replace("\\", "/")))
+        lines.append("%s  %s" % (sha256_text_normalized(p), rel.replace("\\", "/")))
     return "\n".join(lines) + "\n"
 
 
@@ -52,11 +69,12 @@ def main(argv: list[str]) -> int:
         if not OUT.exists():
             print("[X] 缺 SHA256SUMS.txt")
             return 2
-        have = OUT.read_text(encoding="utf-8")
+        # 清单本身也可能被 CRLF 化（README 提过这条坑），比较前先折成 LF
+        have = OUT.read_text(encoding="utf-8").replace("\r\n", "\n")
         if have != want:
             print("[X] SHA256SUMS.txt 与当前文件不一致，重跑一次生成")
             return 2
-        print("[OK] 全部文件校验通过")
+        print("[OK] 全部文件校验通过（%d 项，按 LF 归一）" % want.count("\n"))
         return 0
 
     OUT.write_text(want, encoding="utf-8", newline="\n")

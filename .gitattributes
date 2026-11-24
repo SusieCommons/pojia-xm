@@ -1,0 +1,23 @@
+# 行尾统一：仓库里一律 LF。
+#
+# 不写这一行，Windows 上 core.autocrlf=true 的默认设置会在 clone 时
+# 把文本文件转成 CRLF —— 于是 README 里 sha256 清单、行号、
+# 逐字节还原的测试全部对不上。这个坑我在第一次 clone 时踩到了：
+# 清单按 LF 算的哈希，clone 出来是 CRLF，make_sums --check 直接红。
+#
+# 只在仓库里统一，不动用户的全局设置。
+* text=auto eol=lf
+
+# 例外：Windows 批处理必须 CRLF，否则双击直接报错。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：别让 git 去做任何换行转换或 diff
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.zip binary
+*.db binary

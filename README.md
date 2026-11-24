@@ -308,7 +308,14 @@ python tools/check_clean.py --history
 
 ### 下载后自己核一遍
 
-仓库根目录有 `SHA256SUMS.txt`，覆盖全部跟踪文件。clone 或下载 zip 之后可以逐项核对：
+仓库根目录有 `SHA256SUMS.txt`，覆盖全部跟踪文件。**清单按 LF 行尾计算**，所以核对前先把工作区统一成 LF：
+
+```bash
+git config core.autocrlf false      # 仓库已带 .gitattributes，这一步只是把已有的 clone 拉正
+rm -f $(git ls-files) && git checkout -- .   # 重新检出，行尾按 .gitattributes 走
+```
+
+然后逐项核对：
 
 ```bash
 # Linux / macOS
@@ -321,7 +328,15 @@ Get-Content SHA256SUMS.txt | ForEach-Object {
 }
 ```
 
-`python tools/make_sums.py --check` 是同一个校验的脚本版。CI 每次都会跑，对不上直接红 —— 所以清单和源码不可能长期不一致。
+最省事的是直接用脚本，它内部会把 CRLF 折成 LF 再算，行尾怎么设置都能对：
+
+```bash
+python tools/make_sums.py --check
+```
+
+**为什么清单按 LF 算**：仓库带 `.gitattributes` 声明 `* text=auto eol=lf`，但 `core.autocrlf=true` 的用户 clone 下来仍然是 CRLF。拿工作区原始字节算哈希，同一份提交在不同机器上会得出不同结果，清单就失去意义了。折成 LF 之后，任何行尾设置下结果都一样。
+
+CI 每次都会跑这一步，对不上直接红 —— 清单和源码不可能长期不一致。
 
 Release 里那个 exe 的哈希单独发布在 Release 正文，因为仓库里的清单只覆盖源码，exe 不进库。
 
