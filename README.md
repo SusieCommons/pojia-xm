@@ -50,10 +50,17 @@
 
 | 方式 | 适合谁 | 怎么做 |
 | --- | --- | --- |
-| 预编译 exe | 不想装 Python | 从 [Releases](https://github.com/SusieCommons/pojia-xm/releases/latest) 下载 `xiaoxiongmao-<版本>.exe`，双击 |
+| 预编译 exe | 不想装 Python | 从 [Releases](https://github.com/SusieCommons/pojia-xm/releases/latest) 下载 `xiaoxiongmao-pojia-<版本>.exe`，双击 |
 | 从源码跑 | 想看代码 / 自己改 | 见[从源码跑](#从源码跑) |
 
 单文件 exe，**电脑上不用装 Python**，放哪都行（桌面就行）。
+
+当前版本 **[v1.3.8](https://github.com/SusieCommons/pojia-xm/releases/tag/v1.3.8)**：
+
+```
+xiaoxiongmao-pojia-1.3.8.exe    16,335,755 B
+SHA-256  b30ca25f527c9ea0dc755e089e8fcf7b28bbb8783b157fb3109416c8218a722a
+```
 
 ### 2️⃣ 看状态灯
 
