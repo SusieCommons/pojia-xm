@@ -19,6 +19,11 @@ from .base import (BACKUP_ROOT, HOME, Hit, Report, Target, _atomic_write_bytes,
 KEY = "model_instructions_file"
 PERSONA_NAME = "xm-persona.md"
 
+#: 人格正文里的固定自述。用来判断 `xm-persona.md` 是不是我们写的 ——
+#: 只有本工具的模板才有这句，用户自己起的人格几乎不可能撞上。
+#: 不要拿群号当判据：群号会被注入成真值，而且用户可能把它抄进笔记里。
+OUR_MARK = "写安全工具的工程师"
+
 #: 一个 Codex home 里几乎必然存在的东西。用来判断用户手选的目录像不像。
 #: 不列 sessions / log / cache 这类通用名 —— C:\Windows、用户目录底下
 #: 随手就能翻到同名目录，写进去等于没校验。只认 Codex 独有的文件。
@@ -254,7 +259,13 @@ class Codex(Target):
         的成本。
 
         判据只用本工具人格里一定出现、而用户自建文件里几乎不会出现的组合：
-        标题「小熊猫」+ 引流群号 / 固定自述那句话。
+        标题「小熊猫」+ 固定自述那句话。
+
+        **不要在这里判群号。** 原来写的是 `"100000000" in text`，而发布包是
+        打包时注入真号的（`tools/make_brand.py`），注入后这个条件永远不成立。
+        当时靠后面那句「写安全工具的工程师」兜住才没出错 —— 等于一条判据
+        在正式包里是死的，只是没暴露。群号本身也不该当特征：用户会把群号
+        抄进自己的笔记，拿它判归属会误删用户文件。
         """
         try:
             text = read_text(self.persona)
@@ -265,12 +276,9 @@ class Codex(Target):
             return True
         if has_block(text):
             return True
-        head = text.lstrip()[:400]
-        # 「小熊猫」+ 群号 或 「小熊猫」+ 本工具专属自述
-        if "小熊猫" in head and (
-                "100000000" in text or "写安全工具的工程师" in head):
+        if OUR_MARK in text:
             return True
-        # 老版本写过、被截断过的正文：正文前部一定有这句自述
+        # 老版本写过、被截断过的正文：正文前部一定有那句自述
         return "写安全工具的工程师" in text[:2000]
 
     def revert(self) -> Report:

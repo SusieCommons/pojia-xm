@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xiaoxiongmao"
-version = "1.3.7"
+version = "1.3.8"
 description = "小熊猫破甲（pojia）：一键破甲 Codex / WorkBuddy / ZCode / DSH 四个 AI 客户端的提示词，换成你自己写的人格。开源、离线、可随时还原。"
 readme = "README.md"
 requires-python = ">=3.10"

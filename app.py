@@ -43,7 +43,7 @@ from core.base import (DATA_DIR, list_backups, load_state,  # noqa: E402
                        prune_backups, read_text, restore_backup, save_root)
 
 APP_NAME = "小熊猫破甲"
-VERSION = "1.3.7"
+VERSION = "1.3.8"
 WIN_TITLE = APP_NAME
 
 
@@ -2156,10 +2156,17 @@ def cmd_revert(names) -> int:
     targets = resolve(names)
     n = 0          # 真的改了文件的客户端数
     failed = 0
+    absent = 0     # 没装 / 没靶点，无事可做
     for t in targets:
         rep = t.revert()
         print("  " + rep.line())
-        if not rep.ok:
+        # 「未安装」不是失败。原来只有 not rep.ok 一个判据，未装的客户端
+        # （found=False，ok 默认 False）会被算进 failed，用户看到
+        # 「2 个目标已还原，1 个失败」，去翻目录找那个没还原干净的文件，
+        # 其实那台机器上压根没装 Codex。失败只算「装了我们却还原不动」。
+        if not rep.found:
+            absent += 1
+        elif not rep.ok:
             failed += 1
         elif rep.changed:
             n += 1
@@ -2171,6 +2178,8 @@ def cmd_revert(names) -> int:
         print(f"\n已还原 {n} 个目标")
     else:
         print("\n没有需要还原的注入")
+    if absent:
+        print(f"{absent} 个客户端未安装，跳过")
     return 0
 
 
