@@ -22,7 +22,13 @@ PERSONA_NAME = "xm-persona.md"
 #: 人格正文里的固定自述。用来判断 `xm-persona.md` 是不是我们写的 ——
 #: 只有本工具的模板才有这句，用户自己起的人格几乎不可能撞上。
 #: 不要拿群号当判据：群号会被注入成真值，而且用户可能把它抄进笔记里。
-OUR_MARK = "写安全工具的工程师"
+#:
+#: 1.4.1 换了人格开头（原文是「你是小熊猫，写安全工具的工程师」，现在是
+#: 「小熊猫是一个本地客户端产品」）。旧句子留在 LEGACY_MARKS 里：用户机器
+#: 上还躺着 1.4.0 注入的文件，判不出来就会被当成「用户的文件」而不删，
+#: 还原后残留一份旧人格。两个都认，麻烦只在多一条字符串比较。
+OUR_MARK = "小熊猫是一个本地客户端产品"
+LEGACY_MARKS = ("写安全工具的工程师",)
 
 #: 一个 Codex home 里几乎必然存在的东西。用来判断用户手选的目录像不像。
 #: 不列 sessions / log / cache 这类通用名 —— C:\Windows、用户目录底下
@@ -278,8 +284,11 @@ class Codex(Target):
             return True
         if OUR_MARK in text:
             return True
+        if any(m in text for m in LEGACY_MARKS):
+            return True
         # 老版本写过、被截断过的正文：正文前部一定有那句自述
-        return "写安全工具的工程师" in text[:2000]
+        head = text[:2000]
+        return any(m in head for m in (OUR_MARK,) + LEGACY_MARKS)
 
     def revert(self) -> Report:
         rep = super().revert()

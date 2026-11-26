@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-_ENV_KEYS = ("CODEX_HOME", "WB_HOME", "ZCODE_HOME", "DSH_HOME",
+_ENV_KEYS = ("CODEX_HOME", "WB_HOME", "WB_APP_ROOT", "ZCODE_HOME", "DSH_HOME",
              "DSH_AGENTS_HOME", "XM_DATA", "HOME", "USERPROFILE")
 
 
@@ -30,14 +30,19 @@ def sandbox(monkeypatch):
     try:
         codex = tmp / "codex"
         wb = tmp / "workbuddy"
+        wb_app = tmp / "wb-app"
         zcode = tmp / "zcode"
         dsh = tmp / "dsh"
         data = tmp / "_data"
-        for d in (codex, wb, zcode, dsh, data):
+        for d in (codex, wb, wb_app, zcode, dsh, data):
             d.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setenv("CODEX_HOME", str(codex))
         monkeypatch.setenv("WB_HOME", str(wb))
+        # 安装目录也隔离掉：sys 通道（system role 模板）在那儿。
+        # 不设这个变量，测试会去打真实安装目录 D:/workbady/WorkBuddy ——
+        # 那是在改用户正在用的客户端。
+        monkeypatch.setenv("WB_APP_ROOT", str(wb_app))
         monkeypatch.setenv("ZCODE_HOME", str(zcode))
         monkeypatch.setenv("DSH_HOME", str(dsh))
         monkeypatch.setenv("DSH_AGENTS_HOME", str(tmp / "agents"))
@@ -51,6 +56,7 @@ def sandbox(monkeypatch):
             "root": tmp,
             "codex": codex,
             "wb": wb,
+            "wb_app": wb_app,
             "zcode": zcode,
             "dsh": dsh,
             "data": data,

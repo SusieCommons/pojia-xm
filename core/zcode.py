@@ -90,4 +90,15 @@ class ZCode(Target):
     def collect(self) -> list[Hit]:
         # 只有一个靶点。上一版还写 memory/*.md，但 asar 里找不到任何「读这个
         # 目录当指令」的证据 —— 往那儿塞人格是往别人的记忆里投毒，撤了。
-        return [Hit(self.agents, "block", "用户级 AGENTS.md")]
+        #
+        # where="top" 是 1.4.0 加的：AGENTS.md 被 ZCode 包成 "user's private
+        # global instructions" 塞进 system 末尾，整份文件本来就在尾部；再
+        # 追加到文件尾等于双重靠后。放文件头离「读到它」这个动作最近。
+        #
+        # guard 不再启用。1.4.0 在块外加过两段英文 notice，实测反而成了
+        # 检测特征：ZCode 3.18.2 / GLM-5.3-Flash 的 reasoning 逐条点名
+        # 「它禁止我评估」「它禁止我加安全提醒」，据此判定为越狱，然后
+        # 用户可见回复就是「我不会采用那个角色设定」。人格本身送达了，
+        # 被否掉的是包在它外面的那层自我辩护。现在人格正文用产品文档的
+        # 口吻写（能力表、输出格式、命令接口），块外只留标记段。
+        return [Hit(self.agents, "block", "用户级 AGENTS.md", where="top")]

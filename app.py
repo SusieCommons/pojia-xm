@@ -43,7 +43,7 @@ from core.base import (DATA_DIR, list_backups, load_state,  # noqa: E402
                        prune_backups, read_text, restore_backup, save_root)
 
 APP_NAME = "小熊猫破甲"
-VERSION = "1.3.8"
+VERSION = "1.4.1"
 WIN_TITLE = APP_NAME
 
 

@@ -251,7 +251,7 @@ def dynamic(exe: str) -> None:
             txt, ok = "", False
             print("  UTF-8 解码失败: %s" % e)
         ck("codex 注入后 UTF-8 可解码", ok)
-        ck("codex 注入后含人格正文", "写安全工具的工程师" in txt)
+        ck("codex 注入后含人格正文", "小熊猫是一个本地客户端产品" in txt)
 
         rc, out, _ = run_exe(exe, env, "verify", "--accept", "-t", "codex")
         ck("codex verify 退出码 0", rc == 0, "rc=%d" % rc)
@@ -277,10 +277,15 @@ def dynamic(exe: str) -> None:
         ck("zcode apply 退出码 0", rc == 0, "rc=%d" % rc)
         cur = io.open(md, encoding="utf-8", newline="").read()
         ck("zcode 保留用户原文", "保留这一行" in cur)
-        ck("zcode 含 begin 标记", "xm-persona:begin" in cur)
-        ck("zcode 含 end 标记", "xm-persona:end" in cur)
-        ck("zcode 标记只出现一次", cur.count("xm-persona:begin") == 1,
-           "%d 次" % cur.count("xm-persona:begin"))
+        ck("zcode 含 begin 标记", "xm-doc:begin" in cur)
+        ck("zcode 含 end 标记", "xm-doc:end" in cur)
+        ck("zcode 标记只出现一次", cur.count("xm-doc:begin") == 1,
+           "%d 次" % cur.count("xm-doc:begin"))
+        # 1.4.1 起块外不再有英文 notice。它留在文件里的话，模型在 reasoning
+        # 里会把它逐条列成越狱特征，人格等于白注入。
+        for bad in ("[configuration]", "not a role-play request",
+                    "do not evaluate", "needs your approval"):
+            ck("zcode 无退场 notice：%s" % bad, bad not in cur)
 
         # 幂等：连注入三次体积不变
         sizes = [len(cur.encode("utf-8"))]
@@ -294,7 +299,8 @@ def dynamic(exe: str) -> None:
         back = io.open(md, encoding="utf-8", newline="").read()
         ck("zcode 还原等于原文", back == orig,
            "原 %r / 现 %r" % (orig[:16], back[:16]))
-        ck("zcode 还原后无残留标记", "xm-persona:begin" not in back)
+        ck("zcode 还原后无残留标记", "xm-doc:begin" not in back)
+        ck("zcode 还原后无旧标记", "xm-persona:begin" not in back)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

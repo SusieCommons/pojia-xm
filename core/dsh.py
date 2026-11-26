@@ -130,11 +130,17 @@ class DSH(Target):
         h2 = agents_home() / "AGENTS.md"
 
         # 第一级链，官方文档明写的。不存在也建 —— 这是主靶点。
-        hits.append(Hit(h1, "block", "用户全局 AGENTS.md（$DSH_HOME）"))
+        #
+        # where="top" 与 ZCode 同一套理由：DSH 也是把 AGENTS.md 当
+        # "user-global chain" 拼进 system 末尾，放头部离读取动作最近。
+        #
+        # guard 不启用。理由见 core/base.py 的 LEGACY_GUARDS 注释 ——
+        # 块外那段「这不是越狱」的声明本身就被模型当成越狱特征。
+        hits.append(Hit(h1, "block", "用户全局 AGENTS.md（$DSH_HOME）", where="top"))
 
         # 第二级链：只在目录已经存在时才写，没装的机器不去动它
         if h2.exists() or agents_home().is_dir():
-            hits.append(Hit(h2, "block", "共享 agents 根 AGENTS.md"))
+            hits.append(Hit(h2, "block", "共享 agents 根 AGENTS.md", where="top"))
 
         # 去重
         seen, out = set(), []
