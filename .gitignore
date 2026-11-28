@@ -56,6 +56,13 @@ _keys/
 _manifest.json
 # 发版留档：Release 正文、上传脚本、本地对账输出
 _release/
+# 还原实测快照：真机 ~/.codex 等处的原始文件副本，含本机路径与真实群号
+_revert_before*/
+_revert_after*/
+_rt/
+_rt_wb/
+# 第三方参考包（研究用，不入库）
+_ref/
 
 # 编辑器
 .vscode/
@@ -64,3 +71,18 @@ _release/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 本机工作记忆与临时提取物（含本机绝对路径，不入库）
+.workbuddy/
+_soul_const.txt
+
+# 本机真机验证脚本：带第三方中转地址与本机路径，只在本机跑，不入库
+tools/lab_*.py
+tools/_probe_*.py
+tools/_verify_*.py
+tools/_cmd_probe_one.py
+tools/_diag_revert.py
+tools/probe_api.py
+
+# 版本号升级脚本：每次发版一次性用，改完即弃
+tools/bump_1*.py

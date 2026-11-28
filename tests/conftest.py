@@ -8,7 +8,6 @@ conftest 在收集阶段就把环境变量改掉，比每个测试自己改更�
 from __future__ import annotations
 
 import importlib
-import os
 import shutil
 import sys
 import tempfile

@@ -12,9 +12,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import (BACKUP_ROOT, HOME, Hit, Report, Target, _atomic_write_bytes,
-                   atomic_write, file_sha, find_target_backup, has_any,
-                   has_block, manual_root, read_text, strip_block, write_like)
+from .base import (HOME, Hit, Report, Target, _atomic_write_bytes,
+                   file_sha, find_target_backup, has_any,
+                   has_block, manual_root, read_text, write_like)
 
 KEY = "model_instructions_file"
 PERSONA_NAME = "xm-persona.md"
@@ -23,12 +23,17 @@ PERSONA_NAME = "xm-persona.md"
 #: 只有本工具的模板才有这句，用户自己起的人格几乎不可能撞上。
 #: 不要拿群号当判据：群号会被注入成真值，而且用户可能把它抄进笔记里。
 #:
-#: 1.4.1 换了人格开头（原文是「你是小熊猫，写安全工具的工程师」，现在是
-#: 「小熊猫是一个本地客户端产品」）。旧句子留在 LEGACY_MARKS 里：用户机器
-#: 上还躺着 1.4.0 注入的文件，判不出来就会被当成「用户的文件」而不删，
-#: 还原后残留一份旧人格。两个都认，麻烦只在多一条字符串比较。
-OUR_MARK = "小熊猫是一个本地客户端产品"
-LEGACY_MARKS = ("写安全工具的工程师",)
+#: 1.4.1 换了人格开头（原文是「你是小熊猫，写安全工具的工程师」，然后是
+#: 「小熊猫是一个本地客户端产品」，1.5.x 又改成「小熊猫是一个本地客户端，
+#: 面向安全工程与研发运维场景」）。旧句子留在 LEGACY_MARKS 里：用户机器
+#: 上还躺着老版本注入的文件，判不出来就会被当成「用户的文件」而不删，
+#: 还原后残留一份旧人格。全认，麻烦只在多两条字符串比较。
+#:
+#: 这里必须跟着 persona.md 的实际首段走。`tools/make_sums.py --check` 和
+#: `tests/` 都不会发现这行跟正文脱节 —— 只有真机 revert 时才暴露：判不出
+#: 「是我们的」，于是不删，`verify` 报旧工具残留。1.5.2 就是这样挂过一次。
+OUR_MARK = "小熊猫是一个本地客户端"
+LEGACY_MARKS = ("写安全工具的工程师", "小熊猫是一个本地客户端产品")
 
 #: 一个 Codex home 里几乎必然存在的东西。用来判断用户手选的目录像不像。
 #: 不列 sessions / log / cache 这类通用名 —— C:\Windows、用户目录底下
@@ -132,11 +137,33 @@ class Codex(Target):
     def apply_key(self, h: Hit, persona: str, bk) -> bool:
         # 1) 人格文件先落地。config.toml 指向的文件不存在时 Codex 会退回
         #    内置指令，表面上看不出问题 —— 所以这一步不能跳过。
+        #
+        #    备份时判一次「这份文件是不是我们写的」：
+        #    是 → 记 exists=False（还原时删掉，别把人格写回去）；
+        #    否 → 正常存字节（用户手写的人格必须还给他）。
+        #
+        #    这个判据不能省。`xm-persona.md` 里是**裸人格正文**，没有任何
+        #    块标记，`_strip_for_backup()` 剥不动 —— 直接 bk.save() 存下来
+        #    的就是上一轮注入的人格。实测（2026-11-27）最坏情况：
+        #    `original_of()` 返回 21,439 字节正文，`OUR_MARK` 命中，
+        #    `strip_target` 第一级照原样写回，用户点「还原」等于没点。
         original_persona = self.persona
-        if not original_persona.exists() or \
-                file_sha(original_persona) != file_sha_from_text(persona):
-            bk.save(self.name, original_persona)
-            write_like(original_persona, persona)
+        # 先记现场，再判断要不要写。判断顺序不能反：
+        # 一旦写入，`_persona_is_ours()` 就恒为 True，备份归属就记错了。
+        if original_persona.exists():
+            if file_sha(original_persona) == file_sha_from_text(persona):
+                # 内容已经一模一样，这次没有「注入前状态」可记。
+                # 但备份不能空着 —— 空着的话 revert 会去翻更老的备份，
+                # 而那些备份里的原文可能是脏的。补一条 ours 记录，
+                # 语义是「这份内容本来就是我们写的」，还原时删。
+                bk.save(self.name, original_persona, ours=True)
+            elif self._persona_is_ours():
+                bk.save(self.name, original_persona, ours=True)
+            else:
+                bk.save(self.name, original_persona)
+        else:
+            bk.save(self.name, original_persona)     # 不存在 → exists=False
+        write_like(original_persona, persona)
 
         # 2) 改 config.toml。先摘掉上一代工具写的整段 —— 它的
         #    developer_instructions 里还压着一份旧人格，不清掉会和新的打架。
@@ -207,7 +234,7 @@ class Codex(Target):
 
         正文文件怎么收拾，三级优先（1.3.6 起）：
 
-          1. **备份里有原文** → 原样写回。用户注入前本来就有一份同名文件
+          1. **备份里有可信原文** → 原样写回。用户注入前本来就有一份同名文件
              （手写的人格），注入把它覆盖了，还原必须还回去。
           2. **确认是我们的** → 删。空文件、带标记段、含本工具人格特征，
              三种都算我们的，删掉没有损失。
@@ -215,27 +242,44 @@ class Codex(Target):
              手段，留一个几十 KB 的文件不算问题。
 
         1.3.5 及以前是无条件 unlink，第 1 和第 3 种情况都会被误删。
+
+        1.5.4 修：第 1 级的「备份里有原文」改成「备份里有**可信**原文」
+        （`backup_trusted()`）。历史备份里存着一堆 21,439 字节的裸人格正文
+        —— `xm-persona.md` 没有块标记，`_strip_for_backup()` 剥不动，
+        第二次注入时把注入态当成了原始态。旧逻辑直接写回，人格原地复活。
         """
         changed = False
 
         if self.persona.exists():
-            # 1) 备份里有原文 → 写回（这是最准的，比任何内容判据都可靠）
             bk = find_target_backup(self.name)
-            orig = bk.original_of(self.persona) if bk else None
+            orig = self.original_bytes(self.persona, bk)
             if orig is not None:
+                # 1) 可信原文 → 写回
                 try:
                     _atomic_write_bytes(self.persona, orig)
                     changed = True
                 except OSError:
                     pass
-            elif self._persona_is_ours():
-                # 2) 确认是我们的 → 删
+            elif bk and bk.was_ours(self.persona):
+                # 2) 备份记着「注入前这份就是我们写的」→ 删。
+                #    不能走第 3 步的内容判据：那一级判不出来的结果也是删，
+                #    但判据是「像不像我们的人格」，改一次人格开头就判不中，
+                #    文件会永久留下。备份里的 ours 标记是当时现场记的，
+                #    比事后猜内容可靠。
                 try:
                     self.persona.unlink()
                     changed = True
                 except OSError:
                     pass
-            # 3) 其他 → 不动
+            elif self._persona_is_ours():
+                # 3) 确认是我们的 → 删
+                try:
+                    self.persona.unlink()
+                    changed = True
+                except OSError:
+                    pass
+            # 4) 其他 → 不动
+
 
         # 2) 删 config.toml 里指向本工具的那一行
         cfg = read_text(self.cfg)
@@ -290,23 +334,74 @@ class Codex(Target):
         head = text[:2000]
         return any(m in head for m in (OUR_MARK,) + LEGACY_MARKS)
 
+    def backup_trusted(self, path: Path, data: bytes) -> bool:
+        """Codex 的备份原文能不能当用户原文用。
+
+        这里只认一件事：这份字节里有没有我们的人格特征。有 → 不可信。
+
+        为什么必须单独判：`xm-persona.md` 是**裸人格正文**，没有 `xm-doc`
+        块标记，`_strip_for_backup()` 对它完全无效。历史上的每一次重复注入
+        都把「注入后」当成「注入前」存进了备份 —— 实测（2026-11-27）最新
+        备份 `20261127-172435` 里那份 21,439 字节的 `00_xm-persona.md`，
+        开头就是 `# 小熊猫` + `小熊猫是一个本地客户端`，和当前人格一字不差。
+        还原时照它写回 = 把人格原样摆回去。
+
+        判据和 `_persona_is_ours()` 一致，但输入是备份里的字节而不是磁盘文件，
+        所以单独实现，不复用那个读盘的方法。
+        """
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            # 解不出来就不是我们写的东西（我们只写 UTF-8）
+            return True
+        if not text.strip():
+            # 注入前是空文件 → 写回空文件也是对的，交给调用方处理
+            return True
+        if has_block(text):
+            return False
+        if OUR_MARK in text or any(m in text for m in LEGACY_MARKS):
+            return False
+        return True
+
     def revert(self) -> Report:
         rep = super().revert()
-        # 收尾：剥完只剩空壳的删掉。判据和 strip_target 一致 ——
-        # 只删「确认是我们的」文件，用户自己放的 xm-persona.md 不动。
+        # 收尾：把 `xm-persona.md` 单独收干净。
         #
-        # 这里原来写的是 `not read_text(...).strip()`，只看空不空。但
-        # strip_target 已经把我们的文件删掉了，能走到这里的只可能是用户的
-        # 原始文件；如果它恰好是空的（用户建了个占位文件还没写），就会被
-        # 这段代码删掉 —— 又是一次「无条件删」的变体。
-        if self.persona.exists() and self._persona_is_ours():
-            if not read_text(self.persona).strip():
-                try:
-                    self.persona.unlink()
-                    if str(self.persona) not in rep.changed:
-                        rep.changed.append(str(self.persona))
-                except OSError:
-                    pass
+        # **这段不能省，也不能只判空**。原因有两个：
+        #
+        # 1. `is_applied()` 对 Codex 的判据是「config.toml 里那行键指向
+        #    xm-persona.md **且文件存在**」。第一步删完键之后它就恒为 False，
+        #    基类 revert 的 `if not self.is_applied(h): continue` 会把人格
+        #    文件整个跳过 —— 用户看到 config 干净了，`~/.codex/xm-persona.md`
+        #    里还躺着两万字人格。实测（2026-11-27）就是这样：config 里
+        #    `model_instructions_file` 已经没了，21,439 字节的人格文件还在。
+        #
+        # 2. 只判「空不空」不够：人格正文剥完剩下的是整段内容，不是空串。
+        #    判据必须用归属（`_persona_is_ours` / 备份里的 ours 标记），
+        #    不是体积。
+        #
+        # 判据优先级跟 `strip_target` 一致：
+        #   * 备份里有可信原文 → 那是用户的文件，不删（可能写回失败）；
+        #   * 其他一律看归属，是我们的就删。
+        #
+        # 1.5.4 修：原来这里写的是 `bk.original_of(...) is not None → drop=False`，
+        # 把脏备份（裸人格正文）当成了「用户原文」，于是永远不删。现在统一
+        # 走 `original_bytes()`，脏备份已经在那层被判定为 None。
+        if not self.persona.exists():
+            return rep
+        bk = find_target_backup(self.name)
+        if self.original_bytes(self.persona, bk) is not None:
+            # 备份里有可信的用户原文 —— strip_target 应该已经写回了。还留着
+            # 说明写回失败，不删，让用户看到文件在，别把原始数据弄丢。
+            return rep
+        if not self._persona_is_ours():
+            return rep
+        try:
+            self.persona.unlink()
+            if str(self.persona) not in rep.changed:
+                rep.changed.append(str(self.persona))
+        except OSError:
+            pass
         return rep
 
 

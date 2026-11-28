@@ -34,16 +34,15 @@ from core import REGISTRY  # noqa: E402
 from core import brand  # noqa: E402
 from core import licnet  # noqa: E402
 from core import proc  # noqa: E402
-from core import ticket  # noqa: E402
 from core import update  # noqa: E402
 from core.zh_argparse import apply_zh  # noqa: E402
 from core import license as lic  # noqa: E402
 from core import base as core_base  # noqa: E402
 from core.base import (DATA_DIR, list_backups, load_state,  # noqa: E402
-                       prune_backups, read_text, restore_backup, save_root)
+                       prune_backups, restore_backup, save_root)
 
 APP_NAME = "小熊猫破甲"
-VERSION = "1.4.1"
+VERSION = "1.5.5"
 WIN_TITLE = APP_NAME
 
 
@@ -1918,7 +1917,7 @@ def cmd_verify_download(paths) -> int:
         # 官方的」—— 双击就能查，不用先去找安装包。
         exe = Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__)
         files = [exe]
-        print(f"  未指定文件，核验当前程序自身")
+        print("  未指定文件，核验当前程序自身")
 
     bad = 0
     for p in files:
@@ -2147,8 +2146,9 @@ def cmd_verify(names) -> int:
     if absent:
         tail += f"，{absent} 个客户端未安装"
     print(f"\n体检完成：{tail}")
-    print("文件层面通过 ≠ 模型一定照做。去客户端发一句「小熊猫自检」，"
-          "回「自检成功」就是真的成了。")
+    print("文件层面通过 ≠ 模型一定照做。新开一个会话，单独发一句「小熊猫自检」，"
+          "只回一行 AY-ONLINE|小熊猫|v1 才是真的成了。")
+    print("老窗口不算数：ZCode / DSH 第二轮只重发增量，用户级指令不会重发。")
     return 0 if not bad else 1
 
 

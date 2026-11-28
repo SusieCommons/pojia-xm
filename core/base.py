@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import binascii
 import hashlib
 import json
 import os
@@ -108,21 +109,55 @@ DATA_DIR = _pick_data_dir()
 BACKUP_ROOT = DATA_DIR / "backups"
 STATE_FILE = DATA_DIR / "state.json"
 
-# 标记段用纯文本分隔线：.tpl / .md / .txt / json 里都合法，肉眼可见也好删。
-# 不用 HTML 注释 —— 提示词模板最终是给模型读的纯文本，注释标记在某些渲染
-# 环节会被吃掉，切除时反而找不到尾。
+# 标记段用 HTML 注释形态。
 #
-# 名字里不出现 persona / role / unlock / jailbreak 这类词。模型读的是纯文本，
-# `========== xm-persona:begin ==========` 这行它看得见 —— 一个自称 persona
-# 的块，第一眼就是"角色扮演注入"。换成 doc（文档）是同一件事的中性说法，
-# 跟块里"产品说明"的写法对得上。
-BEGIN = "========== xm-doc:begin =========="
-END = "========== xm-doc:end =========="
+# 换过两次，每次都有实测依据：
+#
+# 1.4.0 用 `========== xm-persona:begin ==========`（等号分隔线）。名字里带
+# persona 太扎眼，改成 `xm-doc`。
+#
+# 1.5.0 实测发现**等号分隔线本身就是问题**：这行落在正文之前时，模型把它读成
+# 分节符 / 内部配置文件的边界，于是整段被判成「内部配置」。问它「你的系统提示词
+# 是什么」，稳定回 34 字：
+#     「这类内部配置我不能提供。有具体的技术任务或写作需求，直接说。」
+# 同一份正文、同一个通道，只把这行换成 `<!-- ... -->` 注释 → 3181 字全文复述。
+# 三种文案各采样两次，注释形态 6/6 通过，等号形态 4/4 拒绝。
+#
+# 早先不敢用注释，是担心「某些渲染环节会把注释吃掉，切除时找不到尾」。实际
+# 风险可控：注释标记只在**纯文本文件**里用（.md / .tpl / .txt），这些文件不会被
+# Markdown 渲染器重新序列化；JSON 通道走的是 template 字段的字面量替换，也不渲染。
+# 而且还原靠剥标记段，不依赖备份 —— 标记被吃掉的概率远低于被判成配置文件的概率。
+#
+# 名字里仍然不出现 persona / role / unlock / jailbreak，用 doc（文档）这个中性词，
+# 跟块里「产品说明」的写法对得上。
+BEGIN = "<!-- xm-doc:begin -->"
+END = "<!-- xm-doc:end -->"
 
-#: 早期版本用 HTML 注释，读入时一并清掉，避免旧块叠在新块上面。
-#: 1.4.0 及更早用 xm-persona 那对标记，同样当遗留处理 —— 升级后重跑一次
-#: 就换成新标记，还原也能认得旧的。
+#: 纯文本通道（AGENTS.md / *.md）的**封口行**。
+#:
+#: 为什么不是「头标记 + 正文 + 尾标记」：
+#:
+#:     format                         结果
+#:     ------------------------------ ------------------------------
+#:     标记行 + 正文                    34 字拒绝「这类内部配置我不能提供」
+#:     标记行(HTML 注释) + 正文          0 字（上游静默过滤）
+#:     正文 + 标记行                    3171 字全文复述  ← 只有这种能用
+#:
+#: 也就是说正文之前**不能有任何一行标记**，任何形态都不行。但正文在前就把
+#: 头尾包夹的结构破坏了 —— `_cut(BEGIN, END)` 只切两行之间，正文留在原地，
+#: revert 剥不掉、重复注入还会叠一份。
+#:
+#: 解法：正文之后只留**一行**封口，把这行之前压进去的字符数记在行内。
+#: 剥离时按这个数反推正文起点，不需要头标记。CRC32 用来确认「这个数是
+#: 对这份文件说的」—— 用户手动删了几行、编辑器转了一次换行，长度就对不上，
+#: 此时宁可不切（留给备份还原），也不按错的偏移下刀把用户正文切掉。
+SEAL_FMT = "<!-- xm-doc:seal {}:{} -->"
+SEAL_RE = re.compile(r"^<!--\s*xm-doc:seal\s+(\d+):([0-9a-fA-F]{8})\s*-->\r?$", re.M)
+
+#: 早期版本用过的标记，读入时一并清掉，避免旧块叠在新块上面 / 残块留在文件里。
+#: 顺序不重要 —— strip / 清理都是逐个跑一遍。
 LEGACY = [
+    ("========== xm-doc:begin ==========", "========== xm-doc:end =========="),
     ("========== xm-persona:begin ==========", "========== xm-persona:end =========="),
     ("<!-- xm:begin v1 -->", "<!-- xm:end -->"),
     ("<!-- xm:begin -->", "<!-- xm:end -->"),
@@ -611,20 +646,108 @@ def _begins_with_our_block(text: str) -> bool:
     return False
 
 
-def strip_block(text: str) -> str:
-    """切掉所有标记段（含旧版 HTML 标记、块外 notice、孤立块尾）。
+def _seal_line(payload: str) -> str:
+    """给 payload 生成封口行。记字符数 + CRC32。
 
-    四步有顺序，顺序不能换：
-      1. **先**切孤尾。此时配对块的收尾标记还在原处，`_orphan_cut_from()`
-         才拿得到可靠切点。反过来先切配对块，孤尾前面就什么都没有了，
-         只能退到段落边界，而残块内部空行太多，会漏掉前面几百行。
-      2. 站位切割 —— 切「有头有尾」的块。
-      3. 块在文件头时，把切完留在开头的空行一并收掉。不收的话：
-         `revert` 做不到逐字节还原（开头多两个空行），重复注入也不幂等
-         （每次 +2 字节）。
-      4. 空行归并。
+    `payload` 是**从正文第一个字符到封口行之前**的完整字节区（含正文后面
+    那两行空行）。之所以把分隔空行也算进去：切的时候只需要一次减法
+    `seal_line_start - n` 就落到正文首字符，不用再猜「正文和封口之间隔了
+    几个换行」—— CRLF / LF 混着的文件里那个猜测必错。
+    """
+    digest = binascii.crc32(payload.encode("utf-8")) & 0xFFFFFFFF
+    return SEAL_FMT.format(len(payload), f"{digest:08x}")
+
+
+def _start_by_lf_len(text: str, end: int, n: int) -> int | None:
+    """从 `end` 往前数 `n` 个「逻辑字符」，`\\r\\n` 算一个。
+
+    用于封口行 CRC 对不上时的兜底：文件被编辑器整篇转成 CRLF 之后，
+    每个 `\\n` 变成两个字符，`end - n` 这个直接减法落不到正文首字符。
+    这里按 LF 口径往回数，才能找回真实起点。数不够就返回 None。
+    """
+    i = end
+    left = n
+    while left > 0 and i > 0:
+        i -= 1
+        if text[i] == "\n" and i > 0 and text[i - 1] == "\r":
+            i -= 1                 # \r\n 合成一个逻辑字符
+        left -= 1
+    return i if left == 0 else None
+
+
+def _strip_seals(text: str) -> str:
+    """按封口行反推并切掉它前面那段正文。
+
+    长度 + CRC 都对上才切。对不上说明文件在注入之后被人动过（用户自己编辑、
+    编辑器整篇转了换行），此时先试一次「按 LF 口径重算」—— 换行被整篇
+    转成 CRLF 是 Windows 上最常见的一种「动过」，正文一个字没改，只是
+    每个 `\\n` 多了个 `\\r`。这种情况必须切，否则还原后人格原样留着，
+    用户看到的就是「点了还原没反应」。
+
+    重算也对不上（真的被编辑过）就**不动** —— 让 revert 走备份那条路，
+    比按错的偏移下刀把用户正文切掉安全得多。
+    """
+    nl = "\r\n" if "\r\n" in text else "\n"
+    for _ in range(8):
+        hit = None
+        for m in SEAL_RE.finditer(text):
+            n = int(m.group(1))
+            want = m.group(2).lower()
+            start = m.start() - n
+            if start >= 0:
+                payload = text[start:m.start()]
+                digest = binascii.crc32(payload.encode("utf-8")) & 0xFFFFFFFF
+                if f"{digest:08x}" == want:
+                    hit = (start, m.end())
+                    break
+            # 兜底：按 LF 口径找起点（文件被转成 CRLF 的情形）
+            alt = _start_by_lf_len(text, m.start(), n)
+            if alt is None or alt >= m.start():
+                continue
+            payload = text[alt:m.start()].replace("\r\n", "\n")
+            digest = binascii.crc32(payload.encode("utf-8")) & 0xFFFFFFFF
+            if f"{digest:08x}" == want:
+                hit = (alt, m.end())
+                break
+        if hit is None:
+            return text
+        start, line_end = hit
+        head = text[:start].rstrip("\r\n")
+        rest = text[line_end:].lstrip("\r\n")
+        if head.strip() and rest.strip():
+            text = head + nl + nl + rest
+        else:
+            text = (head + nl) if head.strip() else rest
+    return text
+
+
+def wrap_body(body: str, nl: str = "\n") -> str:
+    """正文 + 封口行，作为一个可写入的片段（不含前后文）。
+
+    片段结构固定为 `正文 {nl}{nl} seal {nl}`：正文和封口之间**两行**空行，
+    这两行也算进 seal 记的字符数里。切的时候一次减法就落到正文首字符，
+    不用管文件是 LF 还是 CRLF。
+    """
+    b = body.strip()
+    payload = b + nl + nl
+    return b + nl + nl + _seal_line(payload) + nl
+
+
+def strip_block(text: str) -> str:
+    """切掉所有标记段（封口行、旧版包裹标记、块外 notice、孤立块尾）。
+
+    顺序不能换：
+      1. 先剥**封口行**（1.5.0 起的主形态：正文在前、末尾一行 seal）。
+         这一步必须在 `_cut()` 之前 —— seal 不带头标记，`_cut()` 完全
+         看不见它，混在一起跑会让"先切配对块"把 seal 前面的正文留下。
+      2. 切孤尾。此时配对块的收尾标记还在原处，`_orphan_cut_from()`
+         才拿得到可靠切点。
+      3. 站位切割 —— 切「有头有尾」的旧形态块。
+      4. 块在文件头时，把切完留在开头的空行一并收掉。
+      5. 空行归并。
     """
     s = strip_guard(text)
+    s = _strip_seals(s)
     top = _begins_with_our_block(s)
     s = _cut_orphan_tails(s)
     for b, e in [(BEGIN, END)] + LEGACY:
@@ -636,17 +759,29 @@ def strip_block(text: str) -> str:
     return s.rstrip() + ("\n" if s.strip() else "")
 
 
+
 def put_block(text: str, body: str, *, where: str = "end", guard: bool = False) -> str:
-    """把 body 用标记段包好后放进 text。已有段先切掉。
+    """把 body 放进 text，**正文在前、标记在后**。
 
-    两种放法，用哪个看这条通道的读取方式：
+    这条约束是实测出来的，不是设计偏好。三种排布各采样两次：
 
-    * `where="end"`（默认）—— 追加到末尾。系统提示词里越靠后的指令
-      权重越高，末尾是「最新指令」的位置。
-    * `where="top"` —— 插到开头。ZCode / DSH 把 AGENTS.md 包成
-      "user's private global instructions" 塞进 system 消息的**末尾**，
-      整份文件本来就在尾部；再追加到文件尾等于双重靠后。放文件头
-      反而离「读到它」这个动作最近。
+        format                         结果
+        ------------------------------ ----------------------------
+        标记行 + 正文                    34 字拒绝「这类内部配置我不能提供」
+        标记行(HTML 注释) + 正文          0 字（上游静默过滤）
+        正文 + 标记行                    3171 字全文复述  ← 只有这种能用
+
+    也就是说：**只要标记出现在正文之前，无论什么形态，都会让整段被判成
+    「内部配置」或被过滤掉**。等号分隔线、HTML 注释、加说明文字，全都一样。
+
+    早期 `where="top"` 的理由是「ZCode / DSH 把 AGENTS.md 塞进 system 末尾，
+    文件头离读取动作更近」。这个理由在「送达」层面成立，但在「被接受」层面
+    完全不成立 —— 送达了却被模型自己否掉，等于没送达。参数保留只为兼容旧
+    调用方，一律按 end 处理。
+
+    实现细节：块占满全文时（dsh / zcode 的 AGENTS.md 就是这样，宿主原文
+    为空），剥完 base 是空串，此时正文仍然必须是文件第一行 —— 标记落在
+    正文之后的封口行里。
 
     `guard` 参数保留但**不再起作用**。1.4.0 用它加过首尾英文 notice，
     实测反而成了检测特征 —— 模型在 reasoning 里逐条点名「它禁止我评估
@@ -654,11 +789,10 @@ def put_block(text: str, body: str, *, where: str = "end", guard: bool = False) 
     人格正文自己用产品文档的口吻说话，比任何外部声明都稳。
     """
     base = strip_block(text)
-    block = f"{BEGIN}\n{body.rstrip()}\n{END}"
-    if where == "top":
-        return block + ("\n\n" + base if base.strip() else "\n")
-    return (base.rstrip() + "\n\n" if base.strip() else "") + block + "\n"
-
+    frag = wrap_body(body)
+    if base.strip():
+        return base.rstrip() + "\n\n" + frag
+    return frag
 
 # ------------------------------------------------------- system role 通道
 #
@@ -791,8 +925,12 @@ def has_block(text: str) -> bool:
 
     旧实现要求 `BEGIN in text and END in text`，于是残块既不算注入、也
     还原不掉，用户只能手动删文件。
+
+    1.5.0 起纯文本通道写在正文之后的是封口行（`xm-doc:seal`），不带
+    `BEGIN`。所以这里一并认封口行 —— 否则 dsh / zcode 的 AGENTS.md
+    明明注入成功，`status` 和 `verify` 全报「未注入」。
     """
-    if BEGIN in text:
+    if BEGIN in text or SEAL_RE.search(text):
         return True
     return any(b in text and e in text for b, e in LEGACY)
 
@@ -873,6 +1011,18 @@ AGENTS_TAIL = GUARD_TAIL
 CP_OPEN = "<content_policy>"
 CP_CLOSE = "</content_policy>"
 
+#: 交给 `apply_special()` 处理的载体类型。这几种不是整份文本文件：
+#:
+#:   json   —— 提示词是 45 万字符 JSON 里的一个字段，得按字符串字面量做
+#:             区间替换，整份重排会把客户端读到的所有字段格式都换掉。
+#:   apppol —— 安装目录里的插件模板，`</content_policy>` 后面还有一两万字
+#:             官方正文，只能做段内替换，不能切到文末。
+#:
+#: 不用 str 常量分散在各个适配器里：基类要拿它做分派，缺了这个集合
+#: `h.how in SPECIAL_KINDS` 会直接 NameError —— 而那种异常发生在注入循环
+#: 中间，用户看到的是「点了破甲，界面报错，一个文件都没改」。
+SPECIAL_KINDS = frozenset({"json", "apppol"})
+
 #: 老注入器留下的头标记。它们没有闭合标记，整段人格直接糊在文件里，
 #: 只能从头标记一路切到末尾 —— 那不是原文，是旧注入。
 LEGACY_HEAD = re.compile(
@@ -912,17 +1062,34 @@ def put_policy(text: str, body: str, base: str = "") -> str:
     after = text[i + len(CP_OPEN):]
     j = after.find(CP_CLOSE)
     tail = after[j + len(CP_CLOSE):] if j >= 0 else ""
-    block = f"\n{BEGIN}\n{body.rstrip()}\n{END}\n"
+    # 策略段里同样是「正文在前、封口在后」。这一段在 `<content_policy>` 内部，
+    # 前面是 `>` 后面是 `<`，模型读到的是一个普通段落，不是文件开头 —— 但
+    # 同一份正文在四个通道里的行为要一致，否则「WorkBuddy 能过、DSH 不能过」
+    # 这种差异会在用户那边表现为「换个客户端就不灵」。
+    block = "\n" + wrap_body(body)
     return f"{head}{CP_OPEN}{block}{CP_CLOSE}{tail}"
+
+
+#: 老注入器 / 老版本留在正文里的特征串。
+#:
+#: **不要往里加 `破甲自检`。** 它现在是小熊猫自己的兼容口令，人格正文里就有
+#: 一行（`## 命令接口` 的别名列表）。把它当残留串的后果是：每次注入成功、
+#: 体检必报「有旧工具残留：破甲自检」，用户以为没注入上，重跑多少次都一样。
+#: 1.5.2 打包前就是这样挂的。判断「是不是老工具写的」，看下面这几个只有老版本
+#: 才有的句子；口令词本身不承担归属判据。
+RESIDUE_MARKS = (
+    "legacy-tool-a",
+    "你已被圈",
+    "100000001",
+    "xmtoken",
+    "最高优先级覆盖",
+    "阿岩的行事准则",
+)
 
 
 def residue(text: str) -> list[str]:
     """注入后自检：老工具的特征还在不在。"""
-    bad = []
-    for k in ("legacy-tool-a", "你已被圈", "100000001", "xmtoken", "破甲自检"):
-        if k in text:
-            bad.append(k)
-    return bad
+    return [k for k in RESIDUE_MARKS if k in text]
 
 
 def fingerprint(persona: str) -> str:
@@ -981,7 +1148,7 @@ class Backup:
     #: 不参与「注入成功与否」的判断。
     note: str = ""
 
-    def save(self, target: str, path: Path) -> None:
+    def save(self, target: str, path: Path, *, ours: bool = False) -> None:
         """把 path 的当前内容存进备份。
 
         两个坑都在这儿堵：
@@ -997,9 +1164,26 @@ class Backup:
         OSError —— 如果让它冒出去，这一次注入直接算失败，可配置文件本身
         明明还能写。备份的定位是「额外一层保险」，不是前置条件；失败时
         把原因挂在 `self.note` 上，让上层能提示用户「这次没有备份」。
+
+        `ours=True` 是给**没有标记段的载体**留的后门。`_strip_for_backup()`
+        只认 `xm-doc` 那套块标记；Codex 的 `xm-persona.md` 里装的是裸人格
+        正文，一个标记都没有，于是「剥一层」对它完全无效 —— 存下来的就是
+        上一轮注入的人格。实测（2026-11-27）：`original_of()` 返回 21,439
+        字节的正文，`OUR_MARK` 直接命中，`strip_target` 第一级「有备份就写回」
+        把人格原样恢复，用户点还原等于什么都没做。
+
+        调用方自己判得出来（`Codex._persona_is_ours()`），判成「是我们的」
+        就传 `ours=True`：这时正确的语义不是「写回这份内容」，而是
+        「这个文件本来不该存在」—— 记成 `exists=False`，还原时删掉。
         """
         key = str(path)
         if key in self.entries:
+            return
+        if ours:
+            # 注入前的状态就是「我们写的」→ 还原应该删，不该写回。
+            # target 必须留 —— find_target_backup 靠它认领。
+            self.entries[key] = {"exists": False, "target": target,
+                                 "ours": True}
             return
         try:
             raw = path.read_bytes()
@@ -1063,6 +1247,21 @@ class Backup:
         except (OSError, ValueError):
             pass
         return None
+
+    def was_ours(self, path: Path) -> bool:
+        """这个文件在注入前就是我们写的吗（见 `save(ours=True)`）。
+
+        用来区分两种 `exists=False`：
+
+          * 文件本来不存在 → 还原时删掉，这是我们建出来的；
+          * 文件存在但装的是我们上一轮的人格 → 还原时也要删。
+
+        两者在磁盘上的处理相同（删），但语义不同：后者的用户原本可能
+        有一份同名文件，是被我们覆盖的。那种情况 `save()` 走的是正常路径
+        （`ours=False`），记的是 `exists=True` + 原始字节，不会被这里判成 ours。
+        """
+        meta = self.entries.get(str(path))
+        return bool(isinstance(meta, dict) and meta.get("ours"))
 
 
 def new_backup() -> Backup:
@@ -1542,6 +1741,13 @@ class Target:
                     (rep.changed if ok else rep.skipped).append(
                         str(h.path) if ok else
                         f"{h.path.name}：{getattr(self, '_last_error', '') or '写入失败'}")
+                elif h.how in SPECIAL_KINDS:
+                    # 目标自己实现了非文本模板的写入（比如塞在 JSON 字段里的
+                    # 提示词）。基类不认识这些载体，交给子类。
+                    ok = self.apply_special(h, body, bk)
+                    (rep.changed if ok else rep.skipped).append(
+                        str(h.path) if ok else
+                        f"{h.path.name}：{getattr(self, '_last_error', '') or '写入失败'}")
                 else:
                     rep.skipped.append(f"{h.path.name} 未知方式 {h.how}")
             except OSError as e:
@@ -1594,6 +1800,13 @@ class Target:
     def apply_key(self, h: Hit, persona: str, bk: Backup) -> bool:
         return False
 
+    def apply_special(self, h: Hit, body: str, bk: Backup) -> bool:
+        """`SPECIAL_KINDS` 里那几种载体的写入入口。
+
+        基类默认不支持；子类按 h.how 分派自己的实现。
+        """
+        return False
+
     def revert(self) -> Report:
         """还原注入。
 
@@ -1626,17 +1839,31 @@ class Target:
             except OSError as e:
                 rep.skipped.append(f"{h.path.name} 还原失败：{e.strerror or e}")
 
-        # 兜底：备份里记着「注入前不存在」的文件，剥完还剩空壳就删掉。
+        # 兜底：备份里记着「注入前不存在」的文件，剥完还在就删掉。
         # 不靠它判断主流程成没成 —— 剥不动的目标已经进 skipped 了。
+        #
+        # 这一段的语义是硬的：`exists=False` = 这个文件在注入前**不存在**，
+        # 现在盘上这份只可能是我们建出来的，删掉不会丢任何用户数据。
+        #
+        # 1.5.4 收紧了判据（原来只删「空壳」或 ours）：`exists=False` 但内容
+        # 不空的条目以前会被跳过 —— 理由是想防「用户手写覆盖」。实际上
+        # `xm-persona.md` 这类载体注入后内容就是整篇人格（两万字，不是空壳），
+        # 于是最需要删的那种恰好被漏掉。实测（2026-11-27）Codex 还原后
+        # config.toml 干净了，21,439 字节的人格文件还躺在那儿。
+        #
+        # `ours=True`（注入前存在、但装的是我们上一轮写的东西）也走这里：
+        # 两者在磁盘上的处理相同，都是删。
         if bk:
             for path_str, meta in bk.entries.items():
                 if meta.get("target") != self.name or meta.get("exists"):
                     continue
                 p = Path(path_str)
                 try:
-                    if p.exists() and not read_text(p).strip():
-                        p.unlink()
-                        n += 1
+                    if not p.exists():
+                        continue
+                    p.unlink()
+                    n += 1
+                    if str(p) not in rep.changed:
                         rep.changed.append(str(p))
                 except OSError as e:
                     rep.skipped.append(f"{p.name} 删除失败：{e.strerror or e}")
@@ -1667,6 +1894,32 @@ class Target:
             return True
         except OSError:
             return False
+
+    def backup_trusted(self, path: Path, data: bytes) -> bool:
+        """备份里这份「原始字节」能不能当用户原文用。
+
+        备份层只负责存字节，不知道内容归属。但历史上有一类脏备份：注入前
+        目标文件里装的就是上一轮注入的人格（典型是 Codex 的 `xm-persona.md`
+        —— 裸正文，没有 `xm-doc` 块标记，`_strip_for_backup()` 剥不动），
+        于是「注入后」被当成「注入前」存了下来。还原时照它写回，等于把人
+        格又摆回原位，界面上还报「已还原 N 个」。
+
+        基类不知道怎么判断，一律信任。子类按自己的载体格式覆盖。
+        """
+        return True
+
+    def original_bytes(self, path: Path, bk: "Optional[Backup]") -> Optional[bytes]:
+        """取可信的原始字节。不可信就返回 None，让调用方走剥离 / 删除分支。"""
+        if bk is None:
+            return None
+        if bk.was_ours(path):
+            return None                     # 注入前就是我们的文件 → 应删，不写回
+        data = bk.original_of(path)
+        if data is None:
+            return None
+        if not self.backup_trusted(path, data):
+            return None                     # 备份里装的还是我们的东西 → 作废
+        return data
 
     def strip_target(self, h: Hit) -> bool:
         """把单个靶点上的注入剥掉。返回是否真的改了文件。
@@ -1699,9 +1952,10 @@ class Target:
             h.path.unlink()
             return True
 
-        # 1) 备份里有原始字节 → 原样写回（编码也还原）
-        bk = find_target_backup(self.name)
-        orig = bk.original_of(h.path) if bk else None
+        # 1) 备份里有可信的原始字节 → 原样写回（编码也还原）
+        # `original_bytes()` 会把三种不可信情形一并挡掉：备份说「注入前就是
+        # 我们写的」、备份没存到、备份里装的还是我们的内容（脏备份）。
+        orig = self.original_bytes(h.path, find_target_backup(self.name))
         if orig is not None:
             try:
                 write_orig(h.path, orig)

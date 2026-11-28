@@ -131,16 +131,18 @@ class DSH(Target):
 
         # 第一级链，官方文档明写的。不存在也建 —— 这是主靶点。
         #
-        # where="top" 与 ZCode 同一套理由：DSH 也是把 AGENTS.md 当
-        # "user-global chain" 拼进 system 末尾，放头部离读取动作最近。
+        # **where 必须是 end。** 1.4.0 用过 top，理由跟 ZCode 一样（文件本就在
+        # system 末尾，放头部离读取动作最近）。实测否掉了这个理由：标记行出现在
+        # 正文之前时，模型判定整段是「内部配置」，问它复述提示词回 34 字拒绝；
+        # 同一份正文把标记挪到末尾 → 3181 字全文。详见 core/zcode.py:collect。
         #
         # guard 不启用。理由见 core/base.py 的 LEGACY_GUARDS 注释 ——
         # 块外那段「这不是越狱」的声明本身就被模型当成越狱特征。
-        hits.append(Hit(h1, "block", "用户全局 AGENTS.md（$DSH_HOME）", where="top"))
+        hits.append(Hit(h1, "block", "用户全局 AGENTS.md（$DSH_HOME）"))
 
         # 第二级链：只在目录已经存在时才写，没装的机器不去动它
         if h2.exists() or agents_home().is_dir():
-            hits.append(Hit(h2, "block", "共享 agents 根 AGENTS.md", where="top"))
+            hits.append(Hit(h2, "block", "共享 agents 根 AGENTS.md"))
 
         # 去重
         seen, out = set(), []

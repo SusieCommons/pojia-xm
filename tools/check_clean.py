@@ -126,6 +126,27 @@ SKIP_EXT = {".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico",
 
 
 def iter_files():
+    """只产出会真正进仓库的文件。
+
+    以前用 os.walk 扫全盘，结果 `_release/` 里的测试日志、真机快照（.gitignore
+    已排除、永远不会提交）也被当成违规内容，门禁自己把自己卡住。
+    改成问 git：已跟踪的 + 未跟踪但未被忽略的 —— 这正好等于下一次 commit 的内容。
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"],
+            cwd=str(ROOT), capture_output=True, check=True,
+        ).stdout
+        names = [n for n in out.decode("utf-8", "replace").split("\0") if n]
+        for n in names:
+            p = ROOT / n
+            if p.is_file() and p.suffix.lower() not in SKIP_EXT:
+                yield p
+        return
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    # git 不可用时退回全盘扫，宁可多查
     for root, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for fn in files:

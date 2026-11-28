@@ -14,10 +14,11 @@ HEAD = "# 用户原有内容\n\n保留我。\n"
 
 def test_put_block_roundtrip():
     out = base.put_block(HEAD, BODY)
-    assert base.BEGIN in out
-    assert base.END in out
+    assert base.SEAL_RE.search(out), "缺封口行"
+    assert base.BEGIN not in out, "标记落在正文之前会被判成内部配置"
     assert BODY in out
     assert HEAD.strip() in out
+    assert out.startswith("# 用户原有内容"), "文件不是从用户原文开始"
 
 
 def test_has_block_after_put():
@@ -40,10 +41,10 @@ def test_has_block_true_on_orphan_head():
 def test_strip_removes_block_keeps_original():
     text = base.put_block(HEAD, BODY)
     out = base.strip_block(text)
-    assert base.BEGIN not in out
-    assert base.END not in out
+    assert base.SEAL_RE.search(out) is None
     assert BODY not in out
     assert "保留我。" in out
+    assert out == HEAD, "还原不等于原文"
 
 
 def test_strip_orphan_head_cuts_to_end():
@@ -67,8 +68,8 @@ def test_put_block_twice_no_duplicate():
     """重复注入不能叠加出两个块。"""
     text = base.put_block(HEAD, BODY)
     text = base.put_block(text, BODY)
-    assert text.count(base.BEGIN) == 1
-    assert text.count(base.END) == 1
+    assert len(base.SEAL_RE.findall(text)) == 1
+    assert text.count(BODY) == 1
 
 
 def test_strip_empty_file():
@@ -79,19 +80,20 @@ def test_put_policy_into_template():
     """WorkBuddy 的 prompt.tpl：注入点必须在 <content_policy> 段内。"""
     tpl = "HEAD\n<content_policy>\n原始策略\n</content_policy>\nTAIL\n"
     out = base.put_policy(tpl, BODY)
-    assert base.BEGIN in out
+    seal = base.SEAL_RE.search(out)
+    assert seal, "缺封口行"
     # 块必须在开闭标签之间，不能跑到 TAIL 后面
     i = out.index("<content_policy>")
     j = out.index("</content_policy>")
-    k = out.index(base.BEGIN)
-    assert i < k < j
+    assert i < seal.start() < j
     assert "TAIL" in out
+    assert base.BEGIN not in out
 
 
 def test_strip_policy_restores_template():
     tpl = "HEAD\n<content_policy>\n原始策略\n</content_policy>\nTAIL\n"
     out = base.strip_block(base.put_policy(tpl, BODY))
-    assert base.BEGIN not in out
+    assert base.SEAL_RE.search(out) is None
     assert "<content_policy>" in out
     assert "TAIL" in out
 

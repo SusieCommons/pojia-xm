@@ -193,7 +193,6 @@ def verify_wire(wire: str) -> tuple[Optional[dict], str]:
 
 def tamper() -> str:
     """上次版本响应验签失败的原因。空 = 正常。"""
-    global _TAMPER
     with _LAST_LOCK:
         return _TAMPER
 

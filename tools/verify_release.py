@@ -32,7 +32,9 @@ import ctypes.wintypes as wt
 import glob
 import hashlib
 import io
+import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -149,9 +151,75 @@ def ico_frames(path: str) -> int:
 
 
 def project_version() -> str:
-    import re
     src = io.open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
     m = re.search(r'^VERSION\s*=\s*"([^"]+)"', src, re.M)
+    return m.group(1) if m else ""
+
+
+# ---------------------------------------------------------------- 内嵌资源
+
+#: exe 里被打进去的数据文件。datas 里的条目在归档里是明文，能直接取。
+_EMBED_UI = "ui/index.html"
+_EMBED_PERSONA = "persona.md"
+
+#: UI 源码里的占位群号。打出来的包里绝不该看见它。
+_UI_PLACEHOLDER = "100000000"
+
+_RE_GRP_B = re.compile(r'id="grpNo">(\d{5,12})<')
+
+
+def extract_embedded(exe: str, suffix: str) -> bytes | None:
+    """从 PyInstaller 单文件 exe 里取一个内嵌数据文件。
+
+    suffix 用 / 分隔的尾部匹配（归档里用反斜杠，两种都归一）。取不到就
+    返回 None —— 调用方据此判「这版没打进去」而不是崩掉。
+
+    PyInstaller 只在构建环境装，发布校验本来就在那个环境跑；真没有就返回
+    None，由调用方降级成 warn，不至于因为缺个可选依赖把校验整体打挂。
+    """
+    try:
+        from PyInstaller.archive.readers import CArchiveReader
+    except Exception:                                          # noqa: BLE001
+        return None
+    want = suffix.replace("\\", "/").lstrip("/")
+    try:
+        a = CArchiveReader(exe)
+    except Exception:                                          # noqa: BLE001
+        return None
+    try:
+        for name in a.toc:
+            if name.replace("\\", "/").endswith(want):
+                return a.extract(name)
+    except Exception:                                          # noqa: BLE001
+        return None
+    return None
+
+
+def ui_group_no(html: bytes) -> str:
+    """取前端首屏那份群号。优先 <b id="grpNo">，没有再退回 BRAND_MOCK。
+
+    首屏静态值最要紧：后端 brand 接口回来之前（或者接口一直失败时），
+    用户看到的就是它。
+    """
+    s = html.decode("utf-8", "replace")
+    m = _RE_GRP_B.search(s)
+    if m:
+        return m.group(1)
+    m = re.search(r'BRAND_MOCK\s*=\s*\{[^}]*group\s*:\s*"(\d{5,12})"', s)
+    return m.group(1) if m else ""
+
+
+def persona_group_no(md: bytes) -> str:
+    """取人格正文里那份群号。
+
+    人格是注入到别人客户端里的纯文本，它跟程序分离，只能写死 —— 所以它
+    是这里唯一能拿来跟 UI 对照的独立真值来源。
+    """
+    s = md.decode("utf-8", "replace")
+    m = re.search(r"小熊猫交流群\s*(\d{5,12})", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?<!\d)(\d{5,12})(?!\d)", s[-(4000):])
     return m.group(1) if m else ""
 
 
@@ -251,7 +319,7 @@ def dynamic(exe: str) -> None:
             txt, ok = "", False
             print("  UTF-8 解码失败: %s" % e)
         ck("codex 注入后 UTF-8 可解码", ok)
-        ck("codex 注入后含人格正文", "小熊猫是一个本地客户端产品" in txt)
+        ck("codex 注入后含人格正文", "小熊猫是一个本地客户端" in txt)
 
         rc, out, _ = run_exe(exe, env, "verify", "--accept", "-t", "codex")
         ck("codex verify 退出码 0", rc == 0, "rc=%d" % rc)
@@ -277,10 +345,17 @@ def dynamic(exe: str) -> None:
         ck("zcode apply 退出码 0", rc == 0, "rc=%d" % rc)
         cur = io.open(md, encoding="utf-8", newline="").read()
         ck("zcode 保留用户原文", "保留这一行" in cur)
-        ck("zcode 含 begin 标记", "xm-doc:begin" in cur)
-        ck("zcode 含 end 标记", "xm-doc:end" in cur)
-        ck("zcode 标记只出现一次", cur.count("xm-doc:begin") == 1,
-           "%d 次" % cur.count("xm-doc:begin"))
+        ck("zcode 有封口行", "xm-doc:seal" in cur)
+        ck("zcode 封口行只出现一次", cur.count("xm-doc:seal") == 1,
+           "%d 次" % cur.count("xm-doc:seal"))
+        # 1.5.0：正文之前不能有任何标记行 —— 实测会让模型把整段判成
+        # 「内部配置」（34 字拒绝）或直接被上游过滤（0 字）。
+        ck("zcode 无正文前置标记", "xm-doc:begin" not in cur)
+        # 用户原文必须原封不动在文件开头。断言取 seed 的第一行，不写死文案 ——
+        # 之前这里写死了另一份 fixture 的字符串，明明行为正确也报 FAIL。
+        first = orig.splitlines()[0]
+        ck("zcode 从原文第一行开始", cur.startswith(first), repr(cur[:20]))
+        ck("zcode 封口在正文之后", cur.find(first) < cur.find("xm-doc:seal"))
         # 1.4.1 起块外不再有英文 notice。它留在文件里的话，模型在 reasoning
         # 里会把它逐条列成越狱特征，人格等于白注入。
         for bad in ("[configuration]", "not a role-play request",
@@ -299,7 +374,7 @@ def dynamic(exe: str) -> None:
         back = io.open(md, encoding="utf-8", newline="").read()
         ck("zcode 还原等于原文", back == orig,
            "原 %r / 现 %r" % (orig[:16], back[:16]))
-        ck("zcode 还原后无残留标记", "xm-doc:begin" not in back)
+        ck("zcode 还原后无残留标记", "xm-doc:seal" not in back)
         ck("zcode 还原后无旧标记", "xm-persona:begin" not in back)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -325,6 +400,71 @@ def dynamic(exe: str) -> None:
         back = open(md, "rb").read()
         ck("UTF-16LE 还原逐字节一致", back == u16,
            "原 %d / 现 %d" % (len(u16), len(back)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+    print("\n--- 动态：还原要真的回到官方配置 ---")
+    # 1.5.4 的三个现场，逐个用真 exe 复现。它们的共同症状是：命令退出码 0、
+    # 界面报「已还原 N 个文件」，但客户端里人格还在。
+    tmp = tempfile.mkdtemp(prefix="xmrel_rev_")
+    try:
+        env = make_env(tmp)
+        codex_dir = os.path.join(env["HOME"], ".codex")
+        os.makedirs(codex_dir, exist_ok=True)
+        cfg = os.path.join(codex_dir, "config.toml")
+        persona = os.path.join(codex_dir, "xm-persona.md")
+        io.open(cfg, "w", encoding="utf-8", newline="\n").write('model = "gpt-5"\n')
+
+        # (a) 注入前没有 xm-persona.md → 还原后必须不存在。
+        #     旧实现里这一步靠「备份记 exists=False」，而现在人格文件里是整篇
+        #     正文（不是空壳），只要兜底逻辑判「空才删」就漏。
+        rc, _, _ = run_exe(exe, env, "apply", "--accept", "-t", "codex")
+        ck("(a) apply 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("(a) 注入后人格文件已建", os.path.isfile(persona))
+        rc, _, _ = run_exe(exe, env, "revert", "--accept", "-t", "codex")
+        ck("(a) revert 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("(a) 还原后人格文件已删除", not os.path.exists(persona),
+           "残留 %d B" % (os.path.getsize(persona) if os.path.exists(persona) else 0))
+        ck("(a) 还原后配置无 model_instructions_file",
+           "model_instructions_file" not in io.open(cfg, encoding="utf-8").read())
+
+        # (b) 脏备份：备份里存的就是我们的人格正文（真机历史备份全这样）。
+        #     还原不能被它拦住 —— 那是「注入后」，不是「注入前」。
+        bdir = os.path.join(env["XM_DATA"], "backups", "20260101-000000")
+        os.makedirs(os.path.join(bdir, "files"), exist_ok=True)
+        dirty = ("# 小熊猫\n\n小熊猫是一个本地客户端，面向安全工程与研发运维场景。\n")
+        with open(os.path.join(bdir, "files", "00_xm-persona.md"), "wb") as f:
+            f.write(dirty.encode("utf-8"))
+        with open(persona, "wb") as f:
+            f.write(dirty.encode("utf-8"))
+        with open(os.path.join(bdir, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({persona: {"exists": True, "target": "codex",
+                                 "backup": "files/00_xm-persona.md",
+                                 "sha": hashlib.sha256(dirty.encode("utf-8")).hexdigest(),
+                                 "size": len(dirty.encode("utf-8"))}},
+                      f, ensure_ascii=False)
+        io.open(cfg, "a", encoding="utf-8", newline="\n").write(
+            'model_instructions_file = "%s"\n' % persona.replace("\\", "\\\\"))
+        rc, _, _ = run_exe(exe, env, "revert", "--accept", "-t", "codex")
+        ck("(b) 脏备份场景 revert 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("(b) 脏备份没被当成用户原文写回", not os.path.exists(persona),
+           "残留 %d B" % (os.path.getsize(persona) if os.path.exists(persona) else 0))
+
+        # (c) 文件被编辑器整篇转成 CRLF → 封口行 CRC 对不上，仍要能剥干净。
+        zdir = os.path.join(env["HOME"], ".zcode")
+        os.makedirs(zdir, exist_ok=True)
+        zmd = os.path.join(zdir, "AGENTS.md")
+        io.open(zmd, "w", encoding="utf-8", newline="\n").write("# 原文\n\n保留这一行。\n")
+        run_exe(exe, env, "apply", "--accept", "-t", "zcode")
+        raw = open(zmd, "rb").read()
+        with open(zmd, "wb") as f:              # 整篇转 CRLF，等同记事本存一次
+            f.write(raw.replace(b"\n", b"\r\n"))
+        run_exe(exe, env, "revert", "--accept", "-t", "zcode")
+        back = open(zmd, "rb").read()
+        ck("(c) CRLF 转换后仍能剥干净", b"xm-doc:seal" not in back)
+        ck("(c) CRLF 转换后无正文残留", "小熊猫是一个本地客户端" not in
+           back.decode("utf-8", "replace"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -392,6 +532,34 @@ def main() -> int:
     else:
         # build/ 被 .gitignore 排除，CI 里必然没有 —— 这不是缺陷。
         warn("build/icon.ico 不存在", "打包时用了默认图标（CI 属正常）")
+
+    print("\n--- 静态：内嵌前端与人格的群号 ---")
+    ui_raw = extract_embedded(exe, _EMBED_UI)
+    md_raw = extract_embedded(exe, _EMBED_PERSONA)
+    if ui_raw is None:
+        warn("取不到内嵌 %s" % _EMBED_UI,
+             "没装 PyInstaller 或归档结构变了，这项跳过")
+    else:
+        ug = ui_group_no(ui_raw)
+        ck("内嵌 UI 能解析出群号", bool(ug), "got=%r" % ug)
+        ck("内嵌 UI 不是占位群号 %s" % _UI_PLACEHOLDER,
+           ug != _UI_PLACEHOLDER,
+           "打包前先跑 tools/make_brand.py --group <真号>；"
+           "UI 有 6 处硬编码，漏注入就会显示占位号")
+        # 前端任意位置还残留占位号都算错：BRAND_MOCK / 兜底分支同样会被
+        # 用户看到（接口超时时走的就是兜底）。
+        left = ui_raw.count(_UI_PLACEHOLDER.encode())
+        ck("内嵌 UI 全文无占位群号残留", left == 0, "%d 处" % left)
+
+        if md_raw is not None:
+            pg = persona_group_no(md_raw)
+            ck("内嵌人格能解析出群号", bool(pg), "got=%r" % pg)
+            # 两份都写死群号，一定会有「改了 A 忘了 B」。人格是对外的真值：
+            # 它注入到别人机器里之后就改不动了，界面必须跟它一致。
+            ck("内嵌 UI 群号与人格一致", bool(ug) and ug == pg,
+               "ui=%r persona=%r" % (ug, pg))
+        else:
+            warn("取不到内嵌 %s，群号一致性未校验" % _EMBED_PERSONA)
 
     if not a.static_only:
         print("\n--- 动态：--version ---")
