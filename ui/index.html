@@ -302,6 +302,9 @@ main::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.16);
 .strip[data-k=warn]::before{background:linear-gradient(180deg,var(--warn),#d99b20)}
 .strip[data-k=bad]::before{background:linear-gradient(180deg,var(--bad),#c9314c)}
 .strip[data-k=brand]::before{background:linear-gradient(180deg,var(--brand2),var(--brand))}
+/* 通道卡关掉时不染色，跟「未启用」的灰调一致 */
+.strip[data-k=off]::before{background:var(--dim2);opacity:.55}
+.strip[data-k=off] .s-t b{color:var(--dim2)}
 
 .strip .s-ico{
   width:30px;height:30px;flex:0 0 auto;border-radius:9px;display:grid;place-items:center;
@@ -774,7 +777,7 @@ footer .sp{flex:1}
       <span>统一客户端人格</span>
     </div>
     <div class="tb-right">
-      <span class="ver" id="ver">v1.5.5</span>
+      <span class="ver" id="ver">v1.5.6</span>
       <button class="wbtn" id="btnMin" title="最小化">
         <svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg>
       </button>
@@ -869,9 +872,31 @@ footer .sp{flex:1}
       </div>
     </section>
 
+    <!-- 通道卡：中转站会在请求到达模型之前做内容审计，命中就 403 / 400。
+         本地代理把发出去的字节里那几个词换成等价说法再转发，模型那边收
+         到的仍是同一个意思。开着才有这张卡的存在意义，关着时它只是一行
+         说明 + 一个开关，不抢人格卡的位置。 -->
+    <section class="strip" id="gw" data-k="off">
+      <div class="s-ico">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 12h4l2-5 4 10 2-5h4"/>
+        </svg>
+      </div>
+      <div class="s-main">
+        <div class="s-t">
+          <b>通道代理</b>
+          <em id="gwTag">未启用</em>
+        </div>
+        <div class="s-code" id="gwLine">把请求里的敏感词换一种说法再转发，中转站拦不住</div>
+      </div>
+      <div class="s-act">
+        <button class="s-btn" id="btnGwTest" hidden>测一下</button>
+        <button class="s-btn" id="btnGw">打开</button>
+      </div>
+    </section>
+
     <div class="sec">客户端 <span class="sp"></span><span class="n" id="secNote"></span></div>
     <section class="list" id="list"></section>
-
     <section class="logbox open" id="logbox">
       <div class="logbar" id="logbar">
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
@@ -1019,6 +1044,8 @@ function httpApi(){
     prune_backups:(k)=>call("prune_backups",k),
     verify:()=>call("verify"),
     watch_state:()=>call("watch_state"), watch_toggle:(on)=>call("watch_toggle",on),
+    gw_state:()=>call("gw_state"), gw_toggle:(on)=>call("gw_toggle",on),
+    gw_test:()=>call("gw_test"),
     pick_dir:(n)=>call("pick_dir",n), forget_dir:(n)=>call("forget_dir",n),
     open_data_dir:()=>call("open_data_dir"), open_path:(p)=>call("open_path",p),
     win_min:()=>Promise.resolve(false),
@@ -1037,10 +1064,10 @@ function mockApi(){
     line:"小熊猫交流群 100000000",tip:"装完遇到问题、想要新版、想看别的工具，都进群说一声。",
     url:"https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=100000000",bad:[],
     tamper:"",src:"builtin",status:"builtin"};
-  const UPD_MOCK={has:false,ver:"",local:"1.5.5",url:"",notes:"",force:false,
+  const UPD_MOCK={has:false,ver:"",local:"1.5.6",url:"",notes:"",force:false,
     sha256:"",size:0,at:"",check_at:0,err:"",pending:false,blocked:false,tamper:""};
   return {
-    boot:async()=>({version:"1.5.5 (preview)",targets:MOCK_TARGETS,
+    boot:async()=>({version:"1.5.6 (preview)",targets:MOCK_TARGETS,
       persona:MOCK_PERSONA,stats:{installed:3,injected:2,todo:1,files:5,targets:6,running:2},
       consent:{accepted:false,at:"",version:"1",sections:MOCK_CONSENT},
       brand:BRAND_MOCK,update:UPD_MOCK,blocked:false}),
@@ -1082,6 +1109,14 @@ function mockApi(){
     ]}),
     watch_state:async()=>({on:false,cmd:"preview"}),
     watch_toggle:async(on)=>({ok:true,on:!!on,msg:on?"守护已开，插件更新后会自动补":"守护已关"}),
+    /* 预览模式的通道状态：造一个「未启用」的完整结构，让卡片能正常画。
+       不造「已启用」—— 那会让人以为点了就有代理在跑，实际没有。 */
+    gw_state:async()=>({ok:true,port:8787,running:false,on:0,total:2,need:false,
+      routes:[{name:"codex",label:"Codex",installed:true,local:false,
+               url:"https://<你的中转域名>",upstream:""},
+              {name:"dsh",label:"DSH",installed:false,local:false,url:"",upstream:""}]}),
+    gw_toggle:async(on)=>({ok:false,msg:"预览模式没有后端，开关不生效"}),
+    gw_test:async()=>({ok:false,msg:"预览模式没有后端"}),
     pick_dir:async()=>({ok:false,msg:"预览模式没有选择框"}),
     forget_dir:async()=>({ok:true}),
     open_data_dir:async()=>true, open_path:async()=>true,
@@ -1436,6 +1471,10 @@ const S = {
   targets:[], picked:new Set(), busy:false,
   logCursor:0, progress:0, stage:"", version:"1.2.2",
   watchOn:false, watchLast:"", stats:{installed:0,injected:0,todo:0,files:0,targets:0,running:0},
+  /* 通道代理。gwOn 是「配置指着本地」，gwRun 是「进程真的在听」——
+     两者会不一致（用户手动杀了进程、端口被占），界面必须分开显示，
+     合成一个布尔值会出现「绿点但用不了」。 */
+  gwOn:false, gwRun:false, gwSt:null,
   /* 条款正文缓存。boot() 拿回来存这儿，run() 被 need_consent 拦下时
      直接用它重开面板，不必再跑一次全目标探测。 */
   consentSections:[],
@@ -1977,6 +2016,90 @@ async function toggleWatch(){
   // 强制更新期间不许开守护 —— 旧的注入逻辑不该在后台继续跑
   if(r && r.need_update){ toast(r.msg||"需要先更新", true); }
 }
+
+/* ---------------- 通道代理 ----------------
+   状态有三种，界面上必须分清：
+     未启用    配置直连上游，代理没跑
+     已启用    配置指向本地，代理在听
+     代理没起来 配置已经指向本地，但端口没人听 —— 客户端此时是「完全连不上」，
+              必须标红说清「点一下修复」，不能跟「未启用」一样显示成灰色
+   三种都从后端 state() 拿，前端不自己推。 */
+const GW_TAG = {
+  off:  ["未启用"], on: ["已启用"], dead: ["代理没起来"],
+};
+
+function paintGw(st){
+  const card=$("#gw"), tag=$("#gwTag"), line=$("#gwLine");
+  const btn=$("#btnGw"), test=$("#btnGwTest");
+  if(!st || !st.ok){
+    card.dataset.k="off";
+    tag.textContent="读不到状态";
+    line.textContent=(st&&st.msg)||"";
+    btn.textContent="打开"; btn.disabled=false;
+    test.hidden=true;
+    return;
+  }
+  S.gwSt=st;
+  S.gwOn=!!st.need;
+  S.gwRun=!!st.running;
+  const kind = !st.need ? "off" : (st.running ? "on" : "dead");
+  card.dataset.k=kind;
+  tag.textContent=GW_TAG[kind][0];
+
+  const rows=(st.routes||[]).filter(r=>r.installed);
+  if(!st.need){
+    line.textContent = rows.length
+      ? "把请求里的敏感词换一种说法再转发，中转站拦不住"
+      : "没检测到 Codex / DSH 的配置";
+  }else{
+    const names=rows.filter(r=>r.local).map(r=>r.label).join("、");
+    line.textContent = st.running
+      ? (names + " → 127.0.0.1:" + st.port)
+      : (names + " 已指向本地，但 " + st.port + " 端口没人听 —— 客户端会连不上");
+  }
+  btn.textContent = st.need ? "关闭" : "打开";
+  btn.disabled = false;
+  // 「测一下」只在真跑起来时才有意义
+  test.hidden = !(st.need && st.running);
+}
+
+async function loadGw(){
+  let st=null;
+  try{ st=await api.gw_state(); }catch(e){ st={ok:false,msg:"读状态失败"}; }
+  paintGw(st);
+}
+
+async function toggleGw(){
+  const btn=$("#btnGw");
+  const want=!S.gwOn;
+  btn.disabled=true;
+  btn.textContent = want ? "启动中…" : "关闭中…";
+  let r=null;
+  try{ r=await api.gw_toggle(want); }
+  catch(e){ r={ok:false,msg:"调用失败："+(e&&e.message||e)}; }
+  btn.disabled=false;
+  if(r&&r.state) paintGw(r.state); else loadGw();
+  toast((r&&r.msg)||(want?"通道代理已开":"通道代理已关"), !(r&&r.ok));
+  if(r&&r.ok){
+    log(want?"ok":"dim", want
+      ? "通道代理已开 · 关掉客户端重开一次才走新地址"
+      : "通道代理已关 · 客户端已还原直连");
+  }
+}
+
+async function testGw(){
+  const btn=$("#btnGwTest");
+  const old=btn.textContent;
+  btn.disabled=true; btn.textContent="探测中…";
+  let r=null;
+  try{ r=await api.gw_test(); }
+  catch(e){ r={ok:false,msg:"探测失败："+(e&&e.message||e)}; }
+  btn.disabled=false; btn.textContent=old;
+  if(!r) return;
+  toast(r.msg, !r.ok);
+  log(r.ok?"ok":"bad", r.msg);
+}
+
 async function pickDir(t){
   let r=null;
   try{ r=await api.pick_dir(t.name); }
@@ -2026,6 +2149,8 @@ $("#btnApply").addEventListener("click",()=>run("apply"));
 $("#btnRevert").addEventListener("click",()=>run("revert"));
 $("#btnVerify").addEventListener("click",doHealth);
 $("#btnWatch").addEventListener("click",toggleWatch);
+$("#btnGw").addEventListener("click",toggleGw);
+$("#btnGwTest").addEventListener("click",testGw);
 $("#btnBackups").addEventListener("click",openBackups);
 $("#btnModalX").addEventListener("click",closeModal);
 $("#btnPrune").addEventListener("click",()=>pruneBackups($("#btnPrune")));
@@ -2144,6 +2269,7 @@ function boot(){
   log("dim","正在启动…");
   scan(true);
   loadWatch();
+  loadGw();
   // 版本检查：boot() 只给缓存 / 空壳，后台线程在打网络。这里 500ms 后
   // 开始取结果，取到就画更新卡。不能放在 scan() 之前 —— 那会让首屏多等。
   setTimeout(pollUpdate, 500);

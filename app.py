@@ -32,6 +32,7 @@ if str(HERE) not in sys.path:
 from core import LABELS, ORDER, all_targets, resolve  # noqa: E402
 from core import REGISTRY  # noqa: E402
 from core import brand  # noqa: E402
+from core import gateway  # noqa: E402
 from core import licnet  # noqa: E402
 from core import proc  # noqa: E402
 from core import update  # noqa: E402
@@ -42,7 +43,7 @@ from core.base import (DATA_DIR, list_backups, load_state,  # noqa: E402
                        prune_backups, restore_backup, save_root)
 
 APP_NAME = "小熊猫破甲"
-VERSION = "1.5.5"
+VERSION = "1.5.6"
 WIN_TITLE = APP_NAME
 
 
@@ -1207,6 +1208,107 @@ class Api:
             pass
         return {"on": autostart_on(), "cmd": _self_cmd(), "last": last}
 
+    # ---- 通道代理 ----
+
+    def gw_state(self) -> dict:
+        """通道代理状态。界面上的「通道」按钮靠它决定显示什么。
+
+        这里**不顺手拉起代理**：GUI 打开就偷偷起一个监听端口，用户没点过
+        任何东西却多出一个进程在听 8787，杀软 / 防火墙会当可疑行为报。
+        要起就明确点按钮（`gw_toggle`）。
+        """
+        try:
+            return gateway.state()
+        except Exception as e:                             # noqa: BLE001
+            return {"ok": False, "msg": f"读状态失败：{e}"}
+
+    def gw_toggle(self, on: bool) -> dict:
+        """开 / 关通道代理。
+
+        开 = 「改配置指向本地 + 起进程」，关 = 「起配置还原 + 停进程」。
+        两步合成一个动作，用户不用先点这个再点那个 —— 只做一半的状态
+        （指向本地但代理没起）会让客户端直接连不上，比不做更糟。
+        """
+        on = bool(on)
+        try:
+            if on:
+                if gateway.install() != 0:
+                    return {"ok": False, "msg": "有通道改不动，看日志",
+                            "state": gateway.state()}
+                if not gateway.ensure():
+                    # 配置已经指到本地了但代理起不来 —— 必须把配置改回去，
+                    # 否则用户的客户端从「被拦」变成「完全连不上」
+                    gateway.uninstall()
+                    return {"ok": False, "msg": "代理端口起不来，已还原配置",
+                            "state": gateway.state()}
+                self._log("ok", "通道代理已开 · 改写后转发上游")
+            else:
+                gateway.uninstall()
+                self._log("dim", "通道代理已关 · 客户端直连上游")
+            return {"ok": True, "state": gateway.state()}
+        except Exception as e:                             # noqa: BLE001
+            crash_log(traceback.format_exc())
+            return {"ok": False, "msg": f"操作失败：{e}",
+                    "state": gateway.state()}
+
+    def gw_test(self) -> dict:
+        """发一条真实的探测请求，看改写链路通不通。
+
+        判据不是「上游回 200」—— 探测请求不带 API key，上游一定回 401。
+        **401 恰恰是链路通了的证据**：请求穿过了中转站的内容审计、到了
+        模型服务前面，只是没带凭证。所以：
+          401 / 200  → 通
+          403 / 400  → 没通（被内容审计拦了，说明改写没覆盖到）
+          其它       → 存疑，把状态码原样给用户
+        """
+        st = gateway.state()
+        if not st.get("running"):
+            return {"ok": False, "msg": "代理没在跑，先打开"}
+        try:
+            import urllib.error
+            import urllib.request
+            msgs = []
+            for r in st["routes"]:
+                if not r["local"]:
+                    continue
+                url = f"http://127.0.0.1:{st['port']}/{r['name']}"
+                # 上游真实路径。codex 走 /responses，dsh 走 /chat/completions
+                url += "/responses" if r["name"] == "codex" else "/chat/completions"
+                body = json.dumps({
+                    "model": "gpt-4o-mini",
+                    "input": "破甲自检",
+                    "messages": [{"role": "user", "content": "破甲自检"}],
+                    "max_tokens": 1,
+                }).encode()
+                req = urllib.request.Request(
+                    url, data=body, method="POST",
+                    headers={"Content-Type": "application/json",
+                             # 不带 UA 会被 Cloudflare 的 Browser Integrity
+                             # Check 拦成 403 / 1010，看着像网关没生效
+                             "User-Agent": gateway.DEFAULT_UA})
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        msgs.append(f"{r['label']} 通（{resp.status}）")
+                except urllib.error.HTTPError as e:
+                    code = e.code
+                    txt = e.read()[:160].decode("utf-8", "replace").strip()
+                    if code in (401, 403) and "API_KEY" in txt.upper():
+                        msgs.append(f"{r['label']} 通（{code} 缺 key，正常）")
+                    elif code == 401:
+                        msgs.append(f"{r['label']} 通（401 缺 key，正常）")
+                    elif code in (400, 403):
+                        msgs.append(f"{r['label']} 被拦（{code}）{txt}")
+                    else:
+                        msgs.append(f"{r['label']} 回 {code}：{txt}")
+                except Exception as e:                     # noqa: BLE001
+                    msgs.append(f"{r['label']} 连不上：{type(e).__name__}")
+            if not msgs:
+                return {"ok": False, "msg": "没有已指向本地的通道"}
+            bad = any("被拦" in m or "连不上" in m for m in msgs)
+            return {"ok": not bad, "msg": " · ".join(msgs)}
+        except Exception as e:                             # noqa: BLE001
+            return {"ok": False, "msg": f"探测失败：{type(e).__name__}: {e}"}
+
     def watch_toggle(self, on: bool) -> dict:
         on = bool(on)
         if on and not consent_state()["accepted"]:
@@ -1476,6 +1578,17 @@ def watch_loop(interval: int = 60) -> int:
             if paused:
                 time.sleep(max(60, interval * 5))
                 continue
+
+            # 通道代理：只要配置还指着本地，就必须有进程在听。
+            # 用户关掉终端、睡眠唤醒后 socket 掉了，客户端会从「被拦」
+            # 变成「连不上」—— 比原来更糟。守护每轮确认一次。
+            try:
+                if any(u.is_local() for u in gateway.all_upstreams()):
+                    if not gateway.port_alive():
+                        ok = gateway.ensure()
+                        w("通道代理已停，重启：" + ("成功" if ok else "失败"))
+            except Exception as e:                         # noqa: BLE001
+                w(f"通道代理检查出错：{e}")
 
             st = load_state()
             touched = False
@@ -2304,6 +2417,16 @@ def main(argv=None) -> int:
             print(VERSION)
             return 0
 
+    # gateway 的开关（--install / --uninstall / --dry ...）主解析器不认识，
+    # 而且它是个只读 / 半只读命令，不该过条款闸门 —— 用户正是「连不上模型
+    # 想修通道」才会用它，卡在条款前面等于把出口封了。
+    # 所以在 apply_zh / 构造 parser 之前整体短路，把后面的参数原样交给
+    # core.gateway.cli。
+    if raw and raw[0] == "gateway":
+        if getattr(sys, "frozen", False):
+            attach_console()
+        return gateway.cli(raw[1:])
+
     # argparse 的小标题和内置错误文案是英文的（usage / positional arguments /
     # options / show this help message and exit / error: ...）。这个工具从界面
     # 到文档全是中文，帮助信息突然冒出几句英文很割裂，所以换成中文。
@@ -2314,7 +2437,7 @@ def main(argv=None) -> int:
     ap.add_argument("cmd", nargs="?", default="gui",
                     choices=["gui", "status", "apply", "revert", "verify",
                              "watch", "license", "dir", "update", "group",
-                             "verify-download"])
+                             "verify-download", "gateway"])
     ap.add_argument("-t", "--target", action="append",
                     help="codex / wb / zcode / dsh，可重复")
     ap.add_argument("-p", "--persona", help="自定义人格文件")

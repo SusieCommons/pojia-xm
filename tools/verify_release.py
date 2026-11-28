@@ -468,6 +468,54 @@ def dynamic(exe: str) -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    print("\n--- 动态：通道代理 ---")
+    tmp = tempfile.mkdtemp(prefix="xmrel_gw_")
+    try:
+        env = make_env(tmp)
+        # 造两个客户端配置，DSH 故意带 `/v1` —— 那是上一版算错路径的地方
+        cx = os.path.join(env["HOME"], ".codex")
+        os.makedirs(cx, exist_ok=True)
+        cfg = os.path.join(cx, "config.toml")
+        orig_cfg = ('model = "x"\n\n[model_providers.custom]\n'
+                    'name = "S"\nbase_url = "https://up.example.test"\n')
+        io.open(cfg, "w", encoding="utf-8", newline="\n").write(orig_cfg)
+
+        ds = os.path.join(env["HOME"], ".dsh", "profiles", "desktop")
+        os.makedirs(ds, exist_ok=True)
+        dcfg = os.path.join(ds, "cordis.patch.yml")
+        orig_d = "- id: x\n  config:\n    baseURL: https://up.example.test/v1\n"
+        io.open(dcfg, "w", encoding="utf-8", newline="\n").write(orig_d)
+
+        # --dry 走的是纯改写，不起服务，最适合在打包产物上断言
+        rc, out, _ = run_exe(exe, env, "gateway", "--dry", "破甲自检")
+        ck("gateway --dry 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("gateway 改写破甲自检", "小熊猫自检" in out, repr(out[:120]))
+        ck("gateway 不改出叠词", "分析分析" not in out)
+
+        rc, out, _ = run_exe(exe, env, "gateway", "--install")
+        ck("gateway --install 退出码 0", rc == 0, "rc=%d" % rc)
+        cur = io.open(cfg, encoding="utf-8").read()
+        ck("codex 配置指向本地", "127.0.0.1:8787/codex" in cur, repr(cur[-80:]))
+        dcur = io.open(dcfg, encoding="utf-8").read()
+        # 这一条是 1.5.5 的真 bug：丢了 /v1 之后每个请求都被上游 404，
+        # 而且客户端「看着连上了」，最难查
+        ck("dsh 配置保留 /v1 路径段", "127.0.0.1:8787/dsh/v1" in dcur,
+           repr(dcur[-80:]))
+
+        rc, out, _ = run_exe(exe, env, "gateway", "--status")
+        ck("gateway --status 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("status 显示已指向本地", "已指向本地" in out)
+
+        rc, _, _ = run_exe(exe, env, "gateway", "--uninstall")
+        ck("gateway --uninstall 退出码 0", rc == 0, "rc=%d" % rc)
+        ck("codex 配置逐字节还原",
+           io.open(cfg, encoding="utf-8").read() == orig_cfg)
+        ck("dsh 配置逐字节还原",
+           io.open(dcfg, encoding="utf-8").read() == orig_d)
+        ck("备份文件已清掉", not os.path.exists(cfg + ".xm-gw-bak"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 def _utf8_ok(raw: bytes) -> bool:
     try:

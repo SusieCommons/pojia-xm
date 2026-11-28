@@ -55,7 +55,7 @@
 
 单文件 exe，**电脑上不用装 Python**，放哪都行（桌面就行）。
 
-当前版本 **[v1.5.5](https://github.com/SusieCommons/pojia-xm/releases/tag/v1.5.5)**。
+当前版本 **[v1.5.6](https://github.com/SusieCommons/pojia-xm/releases/tag/v1.5.6)**。
 每个 release 页面带附件清单与 `SHA256SUMS-release-<版本>.txt`，下载后可用
 `certutil -hashfile <文件名> SHA256` 自行核对。
 
@@ -91,6 +91,7 @@
 | **还原** | 按标记剥回官方原版 |
 | **体检** | 逐靶点校验，告诉你哪个没写上、为什么 |
 | **刷新** | 重扫磁盘，重新探测安装位置 |
+| **通道代理** | 中转站拦词时打开：把请求改写后转发，不开就是直连 |
 | 人格编辑框 | 直接改 `persona.md`，改完保存 → 重新点「一键破甲」生效 |
 
 窄屏下同一界面：
@@ -431,6 +432,36 @@ python app.py watch                      # 常驻守护，被覆盖了自动补
 
 `xm.py` 是同功能的薄包装（`gui / status / apply / revert` 四个子命令），`pip install -e .` 之后可以直接 `xm status`。
 
+### 通道代理
+
+人格决定模型怎么回答，管不到「请求根本没到模型」。有些中转站在请求到达
+模型之前做内容审计，命中整词就 403 —— 这种情况下改人格无效，得改发出去的字节。
+
+`gateway` 是本地回环代理：把用户消息里那几个词换成等价说法再转发，
+system 侧（人格正文）一个字节不动。响应原样透传，含流式分块。
+
+```bash
+python app.py gateway                       # 起代理（前台，Ctrl-C 停）
+python app.py gateway --install             # 把 Codex / DSH 指到本地
+python app.py gateway --status              # 看谁指过来了
+python app.py gateway --uninstall           # 还原成直连
+python app.py gateway --dry "破甲自检"      # 只看改写效果，不起服务
+```
+
+默认监听 `127.0.0.1:8787`，一个端口挂两条路由：
+
+```
+http://127.0.0.1:8787/codex/*   →  Codex 的原上游
+http://127.0.0.1:8787/dsh/*     →  DSH 的原上游
+```
+
+`--install` 会备份配置文件（`.xm-gw-bak`）并把原上游记在 `.codex-gw-upstream` /
+`.dsh-gw-upstream`，`--uninstall` 按备份还原、按记录改回。装上之后要**关掉
+客户端重开一次**才走新地址。
+
+界面上底部也有一张「通道代理」卡，一个开关控制「改配置 + 起进程」两件事。
+守护开着时，代理掉了会被自动拉回来。
+
 ### 打包成 exe
 
 ```bash
@@ -552,8 +583,9 @@ python -m pytest tests/ -q
 | `core/wb.py` | WorkBuddy 靶点（`<content_policy>` 段 + 多版本目录） |
 | `core/zcode.py` | ZCode 靶点 |
 | `core/dsh.py` | DSH 靶点 |
+| `core/gateway.py` | 通道代理：改写请求体后转发，绕过中转站的内容审计 |
 | `ui/index.html` | 界面（单文件，图标全内联） |
-| `tests/` | 126 个测试 |
+| `tests/` | 145 个测试 |
 | `tools/check_clean.py` | 仓库门禁（CI 也调它） |
 | `tools/make_sums.py` | 生成并校验 `SHA256SUMS.txt` |
 | `tools/verify_release.py` | 打包产物校验：PE 版本资源 + 沙箱里跑真 exe |
