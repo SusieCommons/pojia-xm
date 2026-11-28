@@ -13,8 +13,8 @@ import re
 from pathlib import Path
 
 from .base import (HOME, Hit, Report, Target, _atomic_write_bytes,
-                   file_sha, find_target_backup, has_any,
-                   has_block, manual_root, read_text, write_like)
+                   decode_bytes, file_sha, find_target_backup, has_any,
+                   has_block, manual_root, read_text, write_like, write_orig)
 
 KEY = "model_instructions_file"
 PERSONA_NAME = "xm-persona.md"
@@ -167,6 +167,7 @@ class Codex(Target):
 
         # 2) 改 config.toml。先摘掉上一代工具写的整段 —— 它的
         #    developer_instructions 里还压着一份旧人格，不清掉会和新的打架。
+        raw_cfg = self.cfg.read_bytes() if self.cfg.is_file() else b""
         text = read_text(self.cfg)
         text, rescued = scrub_pojia(text)
         if not text.strip():
@@ -189,7 +190,24 @@ class Codex(Target):
 
         if new == text:
             return True
-        bk.save(self.name, self.cfg)
+        # 备份 config.toml 时要把我们自己写的那行摘掉。
+        #
+        # `Backup.save()` 的 `_strip_for_backup()` 只认 `xm-doc` 块标记，
+        # 而 Codex 这边是「一行键」，完全不是标记段 —— 它剥不动，于是
+        # 第二次注入时把「带键的配置」当成了原始态存下来。
+        # 实测（2026-11-28）：重复注入两次再还原，GBK 的 config.toml
+        # 变成 UTF-8 —— 因为还原时的「可信原文」其实是注入态，
+        # 被 backup_trusted 判成可信、又被 cfg_orig != cfg_now 判成相等，
+        # 最后落到删行 + write_like(UTF-8) 的退路。
+        #
+        # 这里用注入前刚读到的 raw_cfg，剥掉键后作为备份字节。
+        #
+        # 只有 raw_cfg **本来就带键**（上一轮注入过）时，剥出来才是推测值，
+        # 要标 derived —— 还原时跳过它继续往回翻，拿第一次注入存下的真原文。
+        # 首次注入时 raw_cfg 就是用户原样，剥了等于没剥，照常当原文用。
+        had_key = KEY in decode_bytes(raw_cfg) if raw_cfg else False
+        bk.save_bytes(self.name, self.cfg, _strip_cfg_key(raw_cfg),
+                      derived=had_key)
         write_like(self.cfg, new)
         return True
 
@@ -282,6 +300,28 @@ class Codex(Target):
 
 
         # 2) 删 config.toml 里指向本工具的那一行
+        #
+        # 优先用备份里的原始字节整份写回 —— 注入时 config.toml 被写成了
+        # UTF-8（客户端只认这个），用户的 GBK 文件因此变了编码。还原必须
+        # 把编码也还回去，否则「还原」只是把人格拿掉了，文件已经不是原来那个。
+        # 实测（2026-11-28）：GBK 的 config.toml 注入后还原，125 B → 137 B，
+        # 因为走的是下面那条「删行 + write_like(UTF-8)」的退路。
+        #
+        # 这条路比删行更准：它连空行归并、行尾差异都一并对上，因为整份文件
+        # 就是当时那份字节。拿不到可信原文才走删行。
+        #
+        # 用 `find_original()` 而不是只看最新那份：第二次注入时存的是
+        # `derived` 的推测值（从注入态剥出来的），跳过它继续往回翻才能拿到
+        # 第一次注入时存下的真原文，GBK 才回得去。
+        cfg_now = self.cfg.read_bytes() if self.cfg.is_file() else b""
+        cfg_orig = self.find_original(self.cfg)
+        if cfg_orig is not None and cfg_orig != cfg_now:
+            try:
+                write_orig(self.cfg, cfg_orig)
+                return True
+            except OSError:
+                pass        # 落不下去就退到删行，别让还原整个失败
+
         cfg = read_text(self.cfg)
         m = VALUE_RE.search(cfg)
         if m and Path(m.group(1).replace("\\\\", "\\")).name == PERSONA_NAME:
@@ -348,12 +388,19 @@ class Codex(Target):
 
         判据和 `_persona_is_ours()` 一致，但输入是备份里的字节而不是磁盘文件，
         所以单独实现，不复用那个读盘的方法。
+
+        config.toml 另加一条：备份里如果还带着 `model_instructions_file`
+        那行键，它就不是「注入前」的配置，是注入态。拿它写回等于把键留下，
+        还原后 Codex 照样去读那份人格 —— 用户点还原、界面报成功、人格没变。
+        实测（2026-11-28）：第二、第三个历史备份都是这个形态。
         """
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            # 解不出来就不是我们写的东西（我们只写 UTF-8）
-            return True
+            text = decode_bytes(data)
+        if path == self.cfg:
+            # 解开就行，不用管编码：键是纯 ASCII，GBK 也认得出来
+            return KEY not in text
         if not text.strip():
             # 注入前是空文件 → 写回空文件也是对的，交给调用方处理
             return True
@@ -408,6 +455,55 @@ class Codex(Target):
 def file_sha_from_text(text: str) -> str:
     import hashlib
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _strip_cfg_key(raw: bytes) -> bytes:
+    """把 config.toml 里指向本工具的那行键剥掉，返回原始编码的字节。
+
+    备份层的 `_strip_for_backup()` 只认 `xm-doc` 块标记，Codex 这边是
+    「一行键 + 一个正文文件」，键完全不是标记段。不在这里剥，第二次注入
+    就会把注入态存成原始态，还原时走不到整份写回。
+
+    编码按 `decode_bytes()` 猜（BOM / NUL / utf-8 / gbk 的顺序），剥完按
+    同一个编码写回 —— 用户的 GBK 文件备份进去还是 GBK 字节，这是还原能
+    逐字节回去的前提。猜错了最差是备份不可用，`original_bytes()` 会退回
+    剥离路径，不会把文件弄坏。
+    """
+    if not raw:
+        return raw
+    try:
+        text = decode_bytes(raw)
+    except (UnicodeDecodeError, ValueError):
+        return raw
+    if KEY not in text:
+        return raw
+    kept = [ln for ln in text.splitlines() if not TOP_KEY.match(ln)]
+    # 删完会留下连续空行，收成一个 —— 和 strip_target 里的退路一致，
+    # 免得「备份里的字节」和「删行后的字节」差一行空行导致比对失败。
+    packed: list[str] = []
+    for ln in kept:
+        if not ln.strip() and packed and not packed[-1].strip():
+            continue
+        packed.append(ln)
+    new_text = "\n".join(packed) + ("\n" if packed else "")
+    for enc in ("utf-8-sig", "utf-8", "gbk", "utf-16", "utf-16-le", "utf-16-be"):
+        try:
+            cand = new_text.encode(enc)
+        except UnicodeEncodeError:
+            continue
+        # 只接受「编码后再解开还是同一段文本」的组合
+        try:
+            if cand.decode(enc) == new_text:
+                # UTF-16 类编码自带 BOM 语义，长度会翻倍；只接受字节形态
+                # 和原文同一族的（原文以 BOM 开头才允许带 BOM）
+                if enc.startswith("utf-16") and not (
+                        raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff")
+                        or b"\x00" in raw[:64]):
+                    continue
+                return cand
+        except UnicodeDecodeError:
+            continue
+    return raw
 
 
 def first_table_idx(lines: list[str]) -> int:

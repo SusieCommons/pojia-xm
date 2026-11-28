@@ -1297,6 +1297,134 @@ def test_inject_then_revert_restores_encoding(sandbox, enc):
     assert f.read_bytes() == origin.encode(enc)
 
 
+def test_codex_gbk_config_reverts_byte_for_byte(sandbox):
+    """GBK 中文注释的 config.toml，注入再还原必须逐字节回到原件。
+
+    实测（2026-11-28）：`strip_target()` 删 `model_instructions_file` 那行后
+    调 `write_like()`，该函数硬写 UTF-8 —— 用户的 GBK 配置文件还原后
+    125 B → 137 B，编码被永久改成 UTF-8。人不看字节看不出来，但那份文件
+    从此不再是「原来的文件」，里面的中文注释在别的 GBK 工具里读成乱码。
+
+    修法是优先用备份里的原始字节整份写回（`write_orig`），删行只当兜底。
+    这条测试守的就是那个分支：只要有人把 `write_orig` 改回 `write_like`，
+    字节数立刻对不上。
+    """
+    home = sandbox["codex"]
+    home.mkdir(parents=True, exist_ok=True)
+    cfg = home / "config.toml"
+    # 真机形态：GBK 保存、带中文注释、键值混排
+    origin = (
+        '# 这是我自己的 Codex 配置，别乱改\n'
+        'model = "gpt-5"\n'
+        'model_provider = "openai"\n'
+        '\n'
+        '# 中文注释：主题设置\n'
+        'model_reasoning_effort = "high"\n'
+        '\n'
+        '[desktop]\n'
+        'locale = "zh-CN"\n'
+    ).encode("gbk")
+    cfg.write_bytes(origin)
+
+    t = _targets(sandbox)["codex"]
+    rep = t.inject(PERSONA)
+    assert rep.ok, rep.line()
+
+    injected = cfg.read_bytes()
+    assert injected != origin
+    assert "model_instructions_file" in injected.decode("utf-8"), \
+        "注入后配置不是 UTF-8，客户端读不到这个键"
+    assert (home / "xm-persona.md").exists()
+
+    t.revert()
+    assert cfg.read_bytes() == origin, (
+        "还原后不是原始字节：%d B → %d B" % (len(origin), len(cfg.read_bytes())))
+    assert not (home / "xm-persona.md").exists(), "人格文件没删"
+
+
+def test_codex_gbk_config_survives_reinject(sandbox):
+    """GBK 的 config.toml 注入两次再还原，依然逐字节回到原件。
+
+    这是 E2E 抓到的第二种形态，比单次注入更阴：第二次注入时目标文件里
+    已经有我们写的那行键，`Backup.save()` → `_strip_for_backup()` 只认
+    `xm-doc` 块标记，config.toml 没有任何标记 → 直接把「带键的注入态」
+    存成了「原始态」。还原时：
+
+        original_bytes() 返回注入态 → cfg_orig == cfg_now → 跳过整份写回
+        → 落到删行 + write_like(UTF-8) 退路 → GBK 永久变 UTF-8
+
+    修法：`Codex.apply_key()` 先把键从备份字节里剥掉再 `save_bytes()`。
+    """
+    home = sandbox["codex"]
+    home.mkdir(parents=True, exist_ok=True)
+    cfg = home / "config.toml"
+    origin = (
+        '# 中文注释：模型选择\n'
+        'model = "gpt-5"\n'
+        'model_reasoning_effort = "high"\n'
+        '\n'
+        '[desktop]\n'
+        'locale = "zh-CN"\n'
+    ).encode("gbk")
+    cfg.write_bytes(origin)
+
+    t = _targets(sandbox)["codex"]
+    assert t.inject(PERSONA).ok
+    assert t.inject(PERSONA).ok          # 第二次：备份里那份已经是注入态
+    assert b"model_instructions_file" in cfg.read_bytes()
+
+    t.revert()
+    assert cfg.read_bytes() == origin, (
+        "重复注入后还原不回去：%d B → %d B" % (len(origin), len(cfg.read_bytes())))
+    assert not (home / "xm-persona.md").exists()
+
+
+def test_codex_dirty_cfg_backup_is_rejected(sandbox):
+    """脏 config 备份（里面帯我们那行键）不能当用户原文写回。
+
+    真机历史备份里躺着 1.5.6 及以前的注入态 config.toml。拿它写回，还原
+    之后 `model_instructions_file` 还在，Codex 启动照样去读那份人格 ——
+    用户点还原，界面报成功，人格没变。
+
+    `backup_trusted()` 因此对 config.toml 多看一条：键还在 → 不可信。
+    """
+    import json
+
+    home = sandbox["codex"]
+    home.mkdir(parents=True, exist_ok=True)
+    cfg = home / "config.toml"
+    origin = b'model = "gpt-5"\n'
+    cfg.write_bytes(origin)
+
+    # 手工造一份脏备份：内容就是注入态（路径指向真实的 persona 文件，
+    # 否则 is_applied 直接 False，revert 会跳过，测不到备份判据）
+    from core.codex import KEY
+    base_mod = sandbox["base"]
+    persona = home / "xm-persona.md"
+    persona.write_text(PERSONA, encoding="utf-8")
+    dirty = ('model = "gpt-5"\n'
+             + KEY + ' = "' + str(persona).replace("\\", "\\\\") + '"\n').encode("utf-8")
+
+    root = base_mod.BACKUP_ROOT / "20260101-000001"
+    (root / "files").mkdir(parents=True, exist_ok=True)
+    dst = root / "files" / "00_config.toml"
+    dst.write_bytes(dirty)
+    (root / "manifest.json").write_text(json.dumps({
+        str(cfg): {"exists": True, "target": "codex",
+                   "backup": "files/00_config.toml",
+                   "sha": base_mod.digest(dirty), "size": len(dirty)},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    t = _targets(sandbox)["codex"]
+    # 当前文件也带键，模拟「已注入」
+    cfg.write_bytes(dirty)
+
+    t.revert()
+    left = cfg.read_text(encoding="utf-8")
+    assert KEY not in left, "脏备份被当成用户原文写回，键还在"
+    assert 'model = "gpt-5"' in left
+
+
 def test_inject_into_empty_file(sandbox):
     """0 字节文件能正常注入。"""
     sandbox["zcode"].mkdir(parents=True, exist_ok=True)

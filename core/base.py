@@ -1210,6 +1210,52 @@ class Backup:
             "sha": digest(data), "size": len(data), "target": target,
         }
 
+    def save_bytes(self, target: str, path: Path, data: bytes, *,
+                   ours: bool = False, derived: bool = False) -> None:
+        """按调用方算好的字节存备份，不再跑 `_strip_for_backup()`。
+
+        给「剥注入态」这件事交给靶点自己做的情况用。`_strip_for_backup()`
+        只认 `xm-doc` 块标记，而 Codex 的 config.toml 里那行
+        `model_instructions_file = "...xm-persona.md"` 根本不是标记段 ——
+        它剥不动，第二次注入于是把「带键的配置」当成原始态存了下来。
+
+        实测（2026-11-28）：重复注入两次再还原，GBK 的 config.toml 变成
+        UTF-8。链路是：最新备份里存的是注入态 → `backup_trusted()` 只判
+        内容归属、不判键，放行 → `original_bytes()` 返回它 → `cfg_orig`
+        和 `cfg_now` 恰好相等（都是注入态）→ 跳过整份写回 → 落到删行 +
+        `write_like(UTF-8)` 的退路 → 编码丢了。
+
+        `derived=True` 是给这种情况留的准确标记：这份字节**不是从磁盘原样
+        读到的**，是调用方从注入态里剥出来的推测值。可能是对的，但一定不如
+        更早那份真原文。`original_bytes()` 会跳过它继续往回找。
+
+        编码也一并保留：`_strip_cfg_key()` 按原编码写回，GBK 的配置剥完
+        还是 GBK 字节。这里不做任何内容判断，调用方负全责。
+        """
+        key = str(path)
+        if key in self.entries:
+            return
+        if ours:
+            self.entries[key] = {"exists": False, "target": target,
+                                 "ours": True}
+            return
+        dst = self.root / "files" / f"{len(self.entries):02d}_{path.name}"
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(data)
+        except OSError as e:
+            self.note = f"备份没写成（{getattr(e, 'strerror', None) or e}）"
+            self.entries[key] = {"exists": True, "target": target,
+                                 "backup": "", "sha": "", "size": 0}
+            return
+        rec = {
+            "exists": True, "backup": str(dst.relative_to(self.root)),
+            "sha": digest(data), "size": len(data), "target": target,
+        }
+        if derived:
+            rec["derived"] = True
+        self.entries[key] = rec
+
     def flush(self) -> None:
         try:
             self.root.mkdir(parents=True, exist_ok=True)
@@ -1262,6 +1308,11 @@ class Backup:
         """
         meta = self.entries.get(str(path))
         return bool(isinstance(meta, dict) and meta.get("ours"))
+
+    def is_derived(self, path: Path) -> bool:
+        """这份备份字节是不是调用方推测出来的（见 `save_bytes(derived=True)`）。"""
+        meta = self.entries.get(str(path))
+        return bool(isinstance(meta, dict) and meta.get("derived"))
 
 
 def new_backup() -> Backup:
@@ -1909,7 +1960,13 @@ class Target:
         return True
 
     def original_bytes(self, path: Path, bk: "Optional[Backup]") -> Optional[bytes]:
-        """取可信的原始字节。不可信就返回 None，让调用方走剥离 / 删除分支。"""
+        """取可信的原始字节。不可信就返回 None，让调用方走剥离 / 删除分支。
+
+        除了「备份里装的是我们的东西」，还要跳过 `derived` 记录：那是调用方
+        从注入态里剥出来的推测值，不是磁盘上真实读到的原文。往回找更早的
+        备份才有可能拿到用户真正的原样（典型是 GBK 编码这种剥一遍就对不上
+        的情况）。
+        """
         if bk is None:
             return None
         if bk.was_ours(path):
@@ -1917,9 +1974,37 @@ class Target:
         data = bk.original_of(path)
         if data is None:
             return None
+        if bk.is_derived(path):
+            return None                     # 推测值，不如更早那份真原文
         if not self.backup_trusted(path, data):
             return None                     # 备份里装的还是我们的东西 → 作废
         return data
+
+    def find_original(self, path: Path) -> Optional[bytes]:
+        """从新到旧翻全部备份，拿第一份可信的原始字节。
+
+        `find_target_backup()` 只给最新那一份 —— 最新那份可能是 `derived`
+        的推测值（第二次注入时从注入态剥出来的）。这种情况必须继续往回翻，
+        不然用户只有一次注入也会被后面这次覆盖掉正确备份。
+        """
+        if not BACKUP_ROOT.exists():
+            return None
+        try:
+            dirs = sorted([d for d in BACKUP_ROOT.iterdir() if d.is_dir()],
+                          reverse=True)
+        except OSError:
+            return None
+        for d in dirs:
+            try:
+                data = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not any(v.get("target") == self.name for v in data.values()):
+                continue
+            got = self.original_bytes(path, Backup(d, data))
+            if got is not None:
+                return got
+        return None
 
     def strip_target(self, h: Hit) -> bool:
         """把单个靶点上的注入剥掉。返回是否真的改了文件。
